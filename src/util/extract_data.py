@@ -43,8 +43,8 @@ def download_and_cache(urls_df: pd.DataFrame) -> None:
                 if file.endswith(".csv"):
                     with z.open(file) as f:
                         df_csv = pd.read_csv(f, sep=";", encoding="latin-1")
-                        output_path = BRONZE_DIR / f"{year}_{grouping}.csv.gz"
-                        df_csv.to_csv(output_path, index=False, compression="gzip")
+                        output_path = BRONZE_DIR / f"{year}_{grouping}.parquet"
+                        df_csv.to_parquet(output_path, index=False)
                         print(f"Saved {output_path}")
 
 
