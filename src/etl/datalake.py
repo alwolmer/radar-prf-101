@@ -32,9 +32,11 @@ class DatalakeAdapter(ABC):
         load_dotenv(project_root / ".env")
 
         adapter_config = dict(config or {})
-        backend = str(
-            adapter_config.get("backend") or os.getenv("DATALAKE_BACKEND", "local")
-        ).strip().lower()
+        backend = (
+            str(adapter_config.get("backend") or os.getenv("DATALAKE_BACKEND", "local"))
+            .strip()
+            .lower()
+        )
 
         if backend == "local":
             local_root = Path(
@@ -56,19 +58,28 @@ class DatalakeAdapter(ABC):
                     "S3 datalake backend requires DATALAKE_S3_BUCKET or config['bucket']"
                 )
 
-            prefix = str(
-                adapter_config.get("prefix") or os.getenv("DATALAKE_S3_PREFIX", "")
-            ).strip().strip("/")
-            region_name = str(
-                adapter_config.get("region_name")
-                or os.getenv("DATALAKE_S3_REGION")
-                or os.getenv("AWS_REGION")
-                or os.getenv("AWS_DEFAULT_REGION")
-                or ""
-            ).strip() or None
-            endpoint_url = str(
-                adapter_config.get("endpoint_url") or os.getenv("DATALAKE_S3_ENDPOINT", "")
-            ).strip() or None
+            prefix = (
+                str(adapter_config.get("prefix") or os.getenv("DATALAKE_S3_PREFIX", ""))
+                .strip()
+                .strip("/")
+            )
+            region_name = (
+                str(
+                    adapter_config.get("region_name")
+                    or os.getenv("DATALAKE_S3_REGION")
+                    or os.getenv("AWS_REGION")
+                    or os.getenv("AWS_DEFAULT_REGION")
+                    or ""
+                ).strip()
+                or None
+            )
+            endpoint_url = (
+                str(
+                    adapter_config.get("endpoint_url")
+                    or os.getenv("DATALAKE_S3_ENDPOINT", "")
+                ).strip()
+                or None
+            )
 
             return S3DatalakeAdapter(
                 bucket=bucket,
@@ -119,7 +130,9 @@ class LocalDatalakeAdapter(DatalakeAdapter):
     def persist_directory(self, local_dir: Path, subpath: str) -> str:
         source_dir = Path(local_dir)
         if not source_dir.is_dir():
-            raise FileNotFoundError(f"Local directory to persist not found: {source_dir}")
+            raise FileNotFoundError(
+                f"Local directory to persist not found: {source_dir}"
+            )
 
         target_dir = self.root / _normalize_subpath(subpath)
         target_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -212,7 +225,9 @@ class S3DatalakeAdapter(DatalakeAdapter):
         prefix = self._directory_prefix(subpath)
         keys = self._list_objects(prefix)
         if not keys:
-            raise FileNotFoundError(f"S3 datalake directory not found: {self.uri_for(subpath)}")
+            raise FileNotFoundError(
+                f"S3 datalake directory not found: {self.uri_for(subpath)}"
+            )
 
         target_dir = Path(target_root) / Path(_normalize_subpath(subpath))
         for key in keys:
@@ -229,13 +244,17 @@ class S3DatalakeAdapter(DatalakeAdapter):
         try:
             self._client.download_file(self.bucket, key, str(target_file))
         except Exception as exc:
-            raise FileNotFoundError(f"S3 datalake file not found: {self.uri_for(subpath)}") from exc
+            raise FileNotFoundError(
+                f"S3 datalake file not found: {self.uri_for(subpath)}"
+            ) from exc
         return target_file
 
     def persist_directory(self, local_dir: Path, subpath: str) -> str:
         source_dir = Path(local_dir)
         if not source_dir.is_dir():
-            raise FileNotFoundError(f"Local directory to persist not found: {source_dir}")
+            raise FileNotFoundError(
+                f"Local directory to persist not found: {source_dir}"
+            )
 
         prefix = self._directory_prefix(subpath)
         self._delete_prefix(prefix)

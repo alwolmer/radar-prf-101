@@ -28,14 +28,20 @@ GOOGLE_DRIVE_FILE_ID_REGEX = re.compile(r"/d/([a-zA-Z0-9_-]+)")
 
 
 class PrfSrc2Bronze(BaseETLJob):
-    def __init__(self, spark: SparkSession, config: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self, spark: SparkSession, config: dict[str, Any] | None = None
+    ) -> None:
         super().__init__(spark=spark, config=config, job_name="prf_src2bronze")
-        self.source_page_url = self.config.get("source_page_url", DEFAULT_SOURCE_PAGE_URL)
+        self.source_page_url = self.config.get(
+            "source_page_url", DEFAULT_SOURCE_PAGE_URL
+        )
         self.datalake = DatalakeAdapter.from_env(
             project_root=PROJECT_ROOT,
             config=self.config.get("datalake"),
         )
-        self.bronze_subpath = str(self.config.get("bronze_subpath", "bronze/prf_accidents"))
+        self.bronze_subpath = str(
+            self.config.get("bronze_subpath", "bronze/prf_accidents")
+        )
         self.request_timeout = int(self.config.get("request_timeout", 120))
         self.write_mode = str(self.config.get("write_mode", "overwrite"))
         self.csv_read_options = {
@@ -69,7 +75,9 @@ class PrfSrc2Bronze(BaseETLJob):
     def _download_occurrence_csv(self, *, year: str, source_url: str) -> Path:
         file_id_match = GOOGLE_DRIVE_FILE_ID_REGEX.search(source_url)
         if file_id_match is None:
-            raise ValueError(f"Could not extract Google Drive file id from URL: {source_url}")
+            raise ValueError(
+                f"Could not extract Google Drive file id from URL: {source_url}"
+            )
 
         file_id = file_id_match.group(1)
         download_url = (
@@ -81,12 +89,18 @@ class PrfSrc2Bronze(BaseETLJob):
 
         with zipfile.ZipFile(io.BytesIO(response.content)) as zipped_payload:
             csv_members = [
-                member for member in zipped_payload.namelist() if member.lower().endswith(".csv")
+                member
+                for member in zipped_payload.namelist()
+                if member.lower().endswith(".csv")
             ]
             if not csv_members:
-                raise FileNotFoundError(f"No CSV file found inside PRF archive for {year}")
+                raise FileNotFoundError(
+                    f"No CSV file found inside PRF archive for {year}"
+                )
 
-            extracted_csv_path = self._staging_dir / f"{year}_Agrupados por ocorrência.csv"
+            extracted_csv_path = (
+                self._staging_dir / f"{year}_Agrupados por ocorrência.csv"
+            )
             with zipped_payload.open(csv_members[0]) as source_file:
                 extracted_csv_path.write_bytes(source_file.read())
 
@@ -125,7 +139,7 @@ class PrfSrc2Bronze(BaseETLJob):
 
         self.logger.info("Extracted %s PRF occurrence URLs", len(extracted))
         return extracted
-    
+
     def cleanup(self) -> None:
         self._temp_dir.cleanup()
 
@@ -175,9 +189,12 @@ class PrfSrc2Bronze(BaseETLJob):
         data.write.mode(self.write_mode).partitionBy("br", "source_year_file").parquet(
             str(staging_output_dir)
         )
-        destination = self.datalake.persist_directory(staging_output_dir, self.bronze_subpath)
+        destination = self.datalake.persist_directory(
+            staging_output_dir, self.bronze_subpath
+        )
         self.logger.info("Saved partitioned PRF bronze dataset to %s", destination)
         return destination
+
 
 if __name__ == "__main__":
     spark = SparkSession.builder.appName("PRF Src to Bronze").getOrCreate()
