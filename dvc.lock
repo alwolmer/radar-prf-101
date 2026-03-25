@@ -1,0 +1,69 @@
+schema: '2.0'
+stages:
+  prf_source2bronze:
+    cmd: DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=data 
+      UV_CACHE_DIR=/tmp/uv-cache uv run python -m 
+      src.etl.bronze.prf_source2bronze
+    deps:
+    - path: pyproject.toml
+      hash: md5
+      md5: ff674d744b6ce84a94b11166bb7f20b9
+      size: 955
+    - path: src/etl/base_job.py
+      hash: md5
+      md5: de49b3b4d975fe1ac6f3a5abb2b564f7
+      size: 1754
+    - path: src/etl/bronze/prf_source2bronze.py
+      hash: md5
+      md5: 61c01bd4c7cc127fef6130839a963dee
+      size: 6867
+    - path: src/etl/datalake.py
+      hash: md5
+      md5: 3e9c95328a410498db67b84190c278ce
+      size: 9279
+    - path: uv.lock
+      hash: md5
+      md5: a7d9684c5a125e34f98d98664c1ec384
+      size: 345134
+    outs:
+    - path: data/bronze/prf_accidents
+      hash: md5
+      md5: 4edb8faafd98663ad98e2f13e55f619c.dir
+      size: 78896303
+      nfiles: 5168
+  prf_bronze2silver:
+    cmd: DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=data 
+      UV_CACHE_DIR=/tmp/uv-cache uv run python -m 
+      src.etl.silver.prf_bronze2silver
+    deps:
+    - path: data/bronze/prf_accidents
+      hash: md5
+      md5: 4edb8faafd98663ad98e2f13e55f619c.dir
+      size: 78896303
+      nfiles: 5168
+    - path: pyproject.toml
+      hash: md5
+      md5: ff674d744b6ce84a94b11166bb7f20b9
+      size: 955
+    - path: src/etl/base_job.py
+      hash: md5
+      md5: de49b3b4d975fe1ac6f3a5abb2b564f7
+      size: 1754
+    - path: src/etl/datalake.py
+      hash: md5
+      md5: 3e9c95328a410498db67b84190c278ce
+      size: 9279
+    - path: src/etl/silver/prf_bronze2silver.py
+      hash: md5
+      md5: 444c8cb390180b47132ebfcc926adeaa
+      size: 6912
+    - path: uv.lock
+      hash: md5
+      md5: a7d9684c5a125e34f98d98664c1ec384
+      size: 345134
+    outs:
+    - path: data/silver/prf_accidents_standardized
+      hash: md5
+      md5: 700cbb02b54fe7401d4cb573c24db6b4.dir
+      size: 5120502
+      nfiles: 38

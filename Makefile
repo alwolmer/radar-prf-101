@@ -1,4 +1,4 @@
-.PHONY: install lint linter test pre-commit-install pre-commit-run dvc-status dvc-checkout extract-urls extract-data
+.PHONY: install lint linter test pre-commit-install pre-commit-run dvc-status dvc-checkout dvc-repro dvc-repro-bronze dvc-repro-silver prf-source2bronze prf-bronze2silver extract-urls extract-data
 
 install:
 	UV_CACHE_DIR=/tmp/uv-cache uv sync --all-groups
@@ -26,9 +26,17 @@ dvc-status:
 dvc-checkout:
 	DVC_SITE_CACHE_DIR=/tmp/dvc UV_CACHE_DIR=/tmp/uv-cache uv run python -m dvc checkout
 
-extract-urls:
-	UV_CACHE_DIR=/tmp/uv-cache uv run python -m src.util.extract_urls
+dvc-repro:
+	DVC_SITE_CACHE_DIR=/tmp/dvc UV_CACHE_DIR=/tmp/uv-cache uv run python -m dvc repro
 
-extract-data:
-	UV_CACHE_DIR=/tmp/uv-cache uv run python -m src.util.extract_data
-	DVC_SITE_CACHE_DIR=/tmp/dvc UV_CACHE_DIR=/tmp/uv-cache uv run python -m dvc add data/bronze
+dvc-repro-bronze:
+	DVC_SITE_CACHE_DIR=/tmp/dvc UV_CACHE_DIR=/tmp/uv-cache uv run python -m dvc repro prf_source2bronze
+
+dvc-repro-silver:
+	DVC_SITE_CACHE_DIR=/tmp/dvc UV_CACHE_DIR=/tmp/uv-cache uv run python -m dvc repro prf_bronze2silver
+
+prf-source2bronze:
+	DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=data UV_CACHE_DIR=/tmp/uv-cache uv run python -m src.etl.bronze.prf_source2bronze
+
+prf-bronze2silver:
+	DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=data UV_CACHE_DIR=/tmp/uv-cache uv run python -m src.etl.silver.prf_bronze2silver

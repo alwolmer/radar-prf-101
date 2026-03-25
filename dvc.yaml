@@ -1,0 +1,22 @@
+stages:
+  prf_source2bronze:
+    cmd: DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=data UV_CACHE_DIR=/tmp/uv-cache uv run python -m src.etl.bronze.prf_source2bronze
+    deps:
+      - pyproject.toml
+      - uv.lock
+      - src/etl/base_job.py
+      - src/etl/datalake.py
+      - src/etl/bronze/prf_source2bronze.py
+    outs:
+      - data/bronze/prf_accidents
+  prf_bronze2silver:
+    cmd: DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=data UV_CACHE_DIR=/tmp/uv-cache uv run python -m src.etl.silver.prf_bronze2silver
+    deps:
+      - pyproject.toml
+      - uv.lock
+      - src/etl/base_job.py
+      - src/etl/datalake.py
+      - src/etl/silver/prf_bronze2silver.py
+      - data/bronze/prf_accidents
+    outs:
+      - data/silver/prf_accidents_standardized
