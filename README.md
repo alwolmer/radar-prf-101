@@ -75,20 +75,19 @@ uv run pre-commit run --all-files
 
 The pull request workflow in [`.github/workflows/pre-commit.yml`](.github/workflows/pre-commit.yml) runs the same `pre-commit` suite for pull requests targeting `develop` or `main`.
 
-## Bronze Cache Versioning With DVC
+## PRF Bronze/Silver Versioning With DVC
 
-The `data/bronze` directory is tracked by DVC through [`data/bronze.dvc`](data/bronze.dvc).
+The implemented PRF ETL pipeline is tracked in [`dvc.yaml`](dvc.yaml) with two stages:
 
-Refresh the source URL cache:
+- `prf_source2bronze` versions `data/bronze/prf_accidents`
+- `prf_bronze2silver` versions `data/silver/prf_accidents_standardized`
 
-```bash
-make extract-urls
-```
-
-Refresh the bronze layer and update the DVC pointer in the same step:
+Reproduce both stages, or run them individually:
 
 ```bash
-make extract-data
+make dvc-repro
+make dvc-repro-bronze
+make dvc-repro-silver
 ```
 
 Inspect the tracked data state or restore the tracked files:
@@ -98,4 +97,4 @@ make dvc-status
 make dvc-checkout
 ```
 
-When `data/bronze` changes, commit the updated `data/bronze.dvc` file together with any code changes that produced the new cache contents.
+The bronze stage still reads the live PRF open-data page and Google Drive archives at execution time. DVC versions the materialized local outputs under `data/` plus the stage graph that binds those outputs to the concrete ETL scripts.
