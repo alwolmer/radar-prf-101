@@ -59,7 +59,9 @@ class PrfBronze2Silver(BaseETLJob):
             project_root=PROJECT_ROOT,
             config=self.config.get("datalake"),
         )
-        self.bronze_subpath = str(self.config.get("bronze_subpath", "bronze/prf_accidents"))
+        self.bronze_subpath = str(
+            self.config.get("bronze_subpath", "bronze/prf_accidents")
+        )
         self.silver_subpath = str(
             self.config.get("silver_subpath", "silver/prf_accidents_standardized")
         )
@@ -71,7 +73,7 @@ class PrfBronze2Silver(BaseETLJob):
         super().validate_config()
         if self.spark is None:
             raise ValueError("PrfBronze2Silver requires a Spark session")
-        
+
     def extract(self) -> DataFrame:
         bronze_dir = self.datalake.stage_directory(
             self.bronze_subpath,
@@ -90,8 +92,13 @@ class PrfBronze2Silver(BaseETLJob):
                 base_projection.append(
                     F.trim(F.col("municipio").cast("string")).alias("municipio")
                 )
-            elif column_name in {"km", "latitude", "longitude"} or column_name in INTEGER_LIKE_COLUMNS:
-                base_projection.append(normalize_numeric(column_name).alias(column_name))
+            elif (
+                column_name in {"km", "latitude", "longitude"}
+                or column_name in INTEGER_LIKE_COLUMNS
+            ):
+                base_projection.append(
+                    normalize_numeric(column_name).alias(column_name)
+                )
             else:
                 base_projection.append(F.col(column_name))
 
@@ -108,9 +115,10 @@ class PrfBronze2Silver(BaseETLJob):
         ).otherwise(F.concat(date_text, F.lit(" "), time_text))
         timestamp = F.expr("try_to_timestamp(_timestamp_input, 'yyyy-MM-dd HH:mm:ss')")
         br_canonical = canonicalize_road_code("br")
-        has_valid_coords = (
-            F.col("latitude").between(BRAZIL_BOUNDS["lat_min"], BRAZIL_BOUNDS["lat_max"])
-            & F.col("longitude").between(BRAZIL_BOUNDS["lon_min"], BRAZIL_BOUNDS["lon_max"])
+        has_valid_coords = F.col("latitude").between(
+            BRAZIL_BOUNDS["lat_min"], BRAZIL_BOUNDS["lat_max"]
+        ) & F.col("longitude").between(
+            BRAZIL_BOUNDS["lon_min"], BRAZIL_BOUNDS["lon_max"]
         )
 
         passthrough_columns = [
@@ -119,7 +127,9 @@ class PrfBronze2Silver(BaseETLJob):
             if column_name not in {"latitude", "longitude"}
         ]
 
-        standardized = normalized.withColumn("_timestamp_input", timestamp_input).select(
+        standardized = normalized.withColumn(
+            "_timestamp_input", timestamp_input
+        ).select(
             *passthrough_columns,
             br_canonical.alias("br_canonical"),
             (br_canonical == F.lit("101")).alias("is_br101_declared"),
@@ -128,7 +138,9 @@ class PrfBronze2Silver(BaseETLJob):
             F.month(timestamp).alias("month"),
             F.quarter(timestamp).alias("quarter"),
             F.to_date(F.date_trunc("week", timestamp)).alias("week_start"),
-            F.coalesce(F.col("mortos"), F.lit(0.0)).cast("int").alias("fatal_victims_occ"),
+            F.coalesce(F.col("mortos"), F.lit(0.0))
+            .cast("int")
+            .alias("fatal_victims_occ"),
             timestamp.isNotNull().alias("has_valid_timestamp"),
             has_valid_coords.alias("has_valid_coords"),
             F.when(has_valid_coords, F.col("latitude"))
@@ -143,36 +155,45 @@ class PrfBronze2Silver(BaseETLJob):
         # Silver PRF accidents are intentionally restricted to canonical BR-101 records only.
         standardized = standardized.filter(F.col("br_canonical") == F.lit("101"))
 
-        ordered_columns = [
-            column_name
-            for column_name in normalized.columns
-            if column_name not in {"latitude", "longitude"}
-        ] + [
-            "latitude",
-            "longitude",
-        ] + [
-            "br_canonical",
-            "is_br101_declared",
-            "timestamp",
-            "year",
-            "month",
-            "quarter",
-            "week_start",
-            "fatal_victims_occ",
-            "has_valid_timestamp",
-            "has_valid_coords",
-        ]
+        ordered_columns = (
+            [
+                column_name
+                for column_name in normalized.columns
+                if column_name not in {"latitude", "longitude"}
+            ]
+            + [
+                "latitude",
+                "longitude",
+            ]
+            + [
+                "br_canonical",
+                "is_br101_declared",
+                "timestamp",
+                "year",
+                "month",
+                "quarter",
+                "week_start",
+                "fatal_victims_occ",
+                "has_valid_timestamp",
+                "has_valid_coords",
+            ]
+        )
         return standardized.select(*ordered_columns)
 
     def load(self, data: DataFrame) -> str:
         staging_output_dir = self._staging_dir / "silver_prf_accidents_standardized"
-        data.write.mode(self.write_mode).partitionBy("year").parquet(str(staging_output_dir))
-        destination = self.datalake.persist_directory(staging_output_dir, self.silver_subpath)
+        data.write.mode(self.write_mode).partitionBy("year").parquet(
+            str(staging_output_dir)
+        )
+        destination = self.datalake.persist_directory(
+            staging_output_dir, self.silver_subpath
+        )
         self.logger.info("Saved partitioned PRF silver dataset to %s", destination)
         return destination
-    
+
     def cleanup(self) -> None:
         self._temp_dir.cleanup()
+
 
 if __name__ == "__main__":
     from pyspark.sql import SparkSession
