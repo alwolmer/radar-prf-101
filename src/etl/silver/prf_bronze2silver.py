@@ -8,7 +8,7 @@ from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
 from src.etl.base_job import BaseETLJob
-from src.etl.datalake import DatalakeAdapter
+from src.etl.datalake import DatalakeAdapter, S3DatalakeAdapter
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 BRAZIL_BOUNDS = {
@@ -52,6 +52,25 @@ def prepare_week_start(column_name: str) -> F.Column:
     return F.to_date(F.date_trunc("week", F.col(column_name)))
 
 
+def _configure_spark_s3(spark: Any, datalake: DatalakeAdapter) -> None:
+    if not isinstance(datalake, S3DatalakeAdapter):
+        return
+    hadoop_conf = spark.sparkContext._jsc.hadoopConfiguration()
+    import boto3
+
+    creds = boto3.session.Session().get_credentials().get_frozen_credentials()
+    hadoop_conf.set("fs.s3a.access.key", creds.access_key)
+    hadoop_conf.set("fs.s3a.secret.key", creds.secret_key)
+    if creds.token:
+        hadoop_conf.set("fs.s3a.session.token", creds.token)
+    if datalake.endpoint_url:
+        hadoop_conf.set("fs.s3a.endpoint", datalake.endpoint_url)
+    if datalake.region_name:
+        hadoop_conf.set("fs.s3a.endpoint.region", datalake.region_name)
+    hadoop_conf.set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+    hadoop_conf.set("fs.s3a.path.style.access", "true")
+
+
 class PrfBronze2Silver(BaseETLJob):
     def __init__(self, spark: Any, config: dict[str, Any] | None = None) -> None:
         super().__init__(spark=spark, config=config, job_name="prf_bronze2silver")
@@ -75,11 +94,17 @@ class PrfBronze2Silver(BaseETLJob):
             raise ValueError("PrfBronze2Silver requires a Spark session")
 
     def extract(self) -> DataFrame:
-        bronze_dir = self.datalake.stage_directory(
-            self.bronze_subpath,
-            self._staging_dir / "extract",
-        )
-        return self.spark.read.parquet(str(bronze_dir))
+        uri = self.datalake.uri_for(self.bronze_subpath).replace("s3://", "s3a://")
+        if uri.startswith("s3a://"):
+            _configure_spark_s3(self.spark, self.datalake)
+        else:
+            uri = str(
+                self.datalake.stage_directory(
+                    self.bronze_subpath,
+                    self._staging_dir / "extract",
+                )
+            )
+        return self.spark.read.parquet(uri)
 
     def transform(self, data: DataFrame) -> DataFrame:
         base_projection: list[F.Column] = []
@@ -198,7 +223,14 @@ class PrfBronze2Silver(BaseETLJob):
 if __name__ == "__main__":
     from pyspark.sql import SparkSession
 
-    spark = SparkSession.builder.appName("PRF Bronze to Silver").getOrCreate()
+    spark = (
+        SparkSession.builder.appName("PRF Bronze to Silver")
+        .config(
+            "spark.jars.packages",
+            "org.apache.hadoop:hadoop-aws:3.4.2,com.amazonaws:aws-java-sdk-bundle:1.12.367",
+        )
+        .getOrCreate()
+    )
     job = PrfBronze2Silver(spark=spark)
     job.run()
     spark.stop()
