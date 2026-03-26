@@ -4,6 +4,7 @@ import os
 import shutil
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -259,12 +260,16 @@ class S3DatalakeAdapter(DatalakeAdapter):
         prefix = self._directory_prefix(subpath)
         self._delete_prefix(prefix)
 
-        for path in source_dir.rglob("*"):
-            if not path.is_file():
-                continue
-            relative_path = path.relative_to(source_dir).as_posix()
-            key = f"{prefix}{relative_path}"
+        files = [p for p in source_dir.rglob("*") if p.is_file()]
+
+        def _upload(path: Path) -> None:
+            key = f"{prefix}{path.relative_to(source_dir).as_posix()}"
             self._client.upload_file(str(path), self.bucket, key)
+
+        with ThreadPoolExecutor(max_workers=16) as executor:
+            futures = {executor.submit(_upload, p): p for p in files}
+            for future in as_completed(futures):
+                future.result()
 
         return self.uri_for(subpath)
 
