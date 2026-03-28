@@ -52,7 +52,7 @@ def prepare_week_start(column_name: str) -> F.Column:
     return F.to_date(F.date_trunc("week", F.col(column_name)))
 
 
-def _configure_spark_s3(spark: Any, datalake: DatalakeAdapter) -> None:
+def _configure_spark_s3(spark: SparkSession, datalake: DatalakeAdapter) -> None:
     if not isinstance(datalake, S3DatalakeAdapter):
         return
     hadoop_conf = spark.sparkContext._jsc.hadoopConfiguration()
