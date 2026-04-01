@@ -1,30 +1,27 @@
 from __future__ import annotations
 
-#import io
-import re
+import io
 import tempfile
-#import zipfile
+import zipfile
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
 import geopandas as gpd
-#import requests
+import pandas as pd
+import requests
 from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql import functions as F
 
 from src.etl.base_job import BaseETLJob
 from src.etl.datalake import DatalakeAdapter
 
-# from here:
-
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
-GEODETIC_CRS = "EPSG:4674"
-PROJECTED_CRS = "EPSG:5880"
-CORRIDOR_BUFFER_METERS = 500
-BR101_UFS = {"PB", "BA", "PR", "AL", "PE", "ES", "RN", "RS", "SC", "SE", "SP", "RJ"}
-#excluding SP and RS
+DNIT_URLS = {
+    2017: "https://servicos.dnit.gov.br/dnitcloud/index.php/s/oTpPRmYs5AAdiNr/download?path=/SNV%20Bases%20Geom%C3%A9tricas%20(2013-Atual)%20(SHP)&files=201703A.zip",
+    2021: "https://servicos.dnit.gov.br/dnitcloud/index.php/s/oTpPRmYs5AAdiNr/download?path=/SNV%20Bases%20Geom%C3%A9tricas%20(2013-Atual)%20(SHP)&files=202107A.zip",
+    2026: "https://servicos.dnit.gov.br/dnitcloud/index.php/s/oTpPRmYs5AAdiNr/download?path=/SNV%20Bases%20Geom%C3%A9tricas%20(2013-Atual)%20(SHP)&files=202601A.zip",
+}
+
 
 def canonicalize_road_code(series: pd.Series) -> pd.Series:
     extracted = series.astype("string").str.extract(r"(\d+)", expand=False)
@@ -33,91 +30,98 @@ def canonicalize_road_code(series: pd.Series) -> pd.Series:
 
 
 def load_filtered_dnit_snapshot(
-    snapshot_year: int, path: Path, road_code: str = "101") -> gpd.GeoDataFrame:
-
+    snapshot_year: int, path: Path, road_code: str = "101"
+) -> gpd.GeoDataFrame:
     dnit = gpd.read_file(path, columns=["vl_br", "sg_uf", "versao_snv", "geometry"])
     dnit["br_canonical"] = canonicalize_road_code(dnit["vl_br"])
     dnit = dnit.loc[dnit["br_canonical"].eq(road_code)].copy()
     dnit["snapshot_year"] = snapshot_year
     return dnit
 
-def keep_line_geometries(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    line_types = {"LineString", "MultiLineString"}
-    filtered = gdf.loc[gdf.geometry.geom_type.isin(line_types)].copy()
-    return filtered.loc[filtered.geometry.length > 0].copy()
-
 
 class DnitSrc2Bronze(BaseETLJob):
     def __init__(
-        self, spark: SparkSession, config: dict[str, Any] | None = None) -> None:
+        self, spark: SparkSession, config: dict[str, Any] | None = None
+    ) -> None:
         super().__init__(spark=spark, config=config, job_name="dnit_src2bronze")
         self.datalake = DatalakeAdapter.from_env(
             project_root=PROJECT_ROOT,
             config=self.config.get("datalake"),
         )
-        self.bronze_subpath = str(self.config.get("bronze_subpath", "bronze/dnit_road_network"))
+        self.bronze_subpath = str(
+            self.config.get("bronze_subpath", "bronze/dnit_road_network")
+        )
         self.write_mode = str(self.config.get("write_mode", "overwrite"))
+        self.request_timeout = int(self.config.get("request_timeout", 120))
         self._temp_dir = tempfile.TemporaryDirectory(dir="/tmp")
         self._staging_dir = Path(self._temp_dir.name)
-        self.dnit_files = {
-            2017: self.datalake.source_dir / "201703A.zip",
-            2021: self.datalake.source_dir / "202107A.zip",
-            2026: self.datalake.source_dir / "202601A.zip",
-        }
-        self.municipalities_path = self.datalake.source_dir / "BR_Municipios_2024.zip"
-        self.rgi_path = self.datalake.source_dir / "BR_RG_Imediatas_2024.zip"
 
     def cleanup(self) -> None:
         self._temp_dir.cleanup()
 
-    ##### EXTRACT #####
-    def extract(self) -> dict[str, Any]:
-        dnit_paths = {
-            year: path for year, path in self.dnit_files.items() if path.exists()
-        }
-        return {
-            "dnit": dnit_paths,
-            "municipalities": self.municipalities_path,
-            "rgi": self.rgi_path,
-        }
-    
-    ##### TRANSFORM #####
-    def transform(self, data: dict[str, Any]) -> DataFrame:
-        # Step 1. Building the BR-101 Corridor with GeoPandas
+    def _download_dnit_zip(self, *, year: int, source_url: str) -> Path:
+        response = requests.get(source_url, timeout=self.request_timeout)
+        response.raise_for_status()
+
+        with zipfile.ZipFile(io.BytesIO(response.content)) as zipped_payload:
+            shp_members = [
+                member
+                for member in zipped_payload.namelist()
+                if member.lower().endswith(".shp")
+            ]
+            if not shp_members:
+                raise FileNotFoundError(
+                    f"No SHP file found inside DNIT archive for {year}"
+                )
+
+            extract_dir = self._staging_dir / f"{year}_dnit_shp"
+            zipped_payload.extractall(extract_dir)
+            self.logger.info("Downloaded and extracted DNIT archive for %s", year)
+            return extract_dir / shp_members[0]
+
+    def extract(self) -> list[dict[str, Any]]:
+        datasets: list[dict[str, Any]] = []
+
+        for year, url in DNIT_URLS.items():
+            try:
+                shp_path = self._download_dnit_zip(year=year, source_url=url)
+                datasets.append(
+                    {
+                        "year": year,
+                        "shp_path": shp_path,
+                    }
+                )
+            except requests.exceptions.RequestException as e:
+                self.logger.warning(
+                    "Failed to download DNIT data for year %s: %s", year, e
+                )
+
+        if not datasets:
+            raise RuntimeError("Failed to download any DNIT data.")
+
+        return datasets
+
+    def transform(self, data: list[dict[str, Any]]) -> DataFrame:
         gdfs = [
-            load_filtered_dnit_snapshot(year, path, road_code="101")
-            for year, path in data["dnit"].items()
+            load_filtered_dnit_snapshot(item["year"], item["shp_path"], road_code="101")
+            for item in data
         ]
-        br101_centerlines_gdf = gpd.GeoDataFrame(pd.concat(gdfs, ignore_index=True), crs=gdfs[0].crs)
 
-        # Step 2. Merge the centerlines and create the buffered corridor.
-        centerlines_proj = br101_centerlines_gdf.to_crs(PROJECTED_CRS)
-        road_union_proj = centerlines_proj.unary_union
-        corridor_union_proj = road_union_proj.buffer(CORRIDOR_BUFFER_METERS)
+        if not gdfs:
+            raise ValueError("No DNIT datasets were transformed")
 
-        # Step 3. Load and filter municipalities that intersect the buffered corridor.
-        gdf_mun = gpd.read_file(data["municipalities"]).to_crs(PROJECTED_CRS)
-        retained_mun_proj = gdf_mun.loc[
-            gdf_mun["SIGLA_UF"].isin(BR101_UFS)
-            # Usa o corredor com buffer para a interseção
-            & gdf_mun.geometry.intersects(corridor_union_proj)
-        ].copy()
+        br101_centerlines_gdf = gpd.GeoDataFrame(
+            pd.concat(gdfs, ignore_index=True), crs=gdfs[0].crs
+        )
 
-        # Step 4. Create highway sections by municipality
-        mun_sections_proj = retained_mun_proj.copy()
-        mun_sections_proj["geometry"] = mun_sections_proj.geometry.intersection(road_union_proj)
-        mun_sections_proj = keep_line_geometries(mun_sections_proj.explode(index_parts=False))
-        
-        # Step 5. Converting dataframe to Spark
-        # The geometry is converted to WKT (Well-Known Text) to be stored as a string.
-        mun_sections_proj["geometry_wkt"] = mun_sections_proj.geometry.to_wkt()
+        # Convert geometry to WKT to be able to create a Spark DataFrame
+        br101_centerlines_gdf["geometry_wkt"] = br101_centerlines_gdf.geometry.to_wkt()
         spark_df = self.spark.createDataFrame(
-            mun_sections_proj.drop(columns=["geometry"])
+            br101_centerlines_gdf.drop(columns=["geometry"])
         )
 
         return spark_df.withColumnRenamed("geometry_wkt", "geometry")
 
-    ##### LOAD #####
     def load(self, data: DataFrame) -> str:
         staging_output_dir = self._staging_dir / "bronze_dnit"
         (
@@ -128,10 +132,9 @@ class DnitSrc2Bronze(BaseETLJob):
         destination = self.datalake.persist_directory(
             staging_output_dir, self.bronze_subpath
         )
-        self.logger.info(
-            f"Salvo dataset bronze do DNIT particionado em: {destination}"
-        )
+        self.logger.info("Saved partitioned DNIT bronze dataset to %s", destination)
         return destination
+
 
 if __name__ == "__main__":
     spark = SparkSession.builder.appName("DNIT Src to Bronze").getOrCreate()
