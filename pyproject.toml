@@ -8,6 +8,7 @@ authors = [
     {name = "Arthur Wolmer", email = "arthur.wolmer@gmail.com"},
 ]
 dependencies = [
+    "apache-sedona>=1.8.1",
     "boto3>=1.40.0",
     "dvc>=3.67.0",
     "geopandas>=1.1.3",

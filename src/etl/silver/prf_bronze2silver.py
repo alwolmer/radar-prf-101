@@ -4,20 +4,21 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
+from pyspark.sql.column import Column
 
-from src.etl.base_job import BaseETLJob
+from src.etl.base_job import BaseETLJob, build_spark_session
 from src.etl.datalake import DatalakeAdapter, S3DatalakeAdapter
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-BRAZIL_BOUNDS = {
+PROJECT_ROOT: Path = Path(__file__).resolve().parents[3]
+BRAZIL_BOUNDS: dict[str, int | float] = {
     "lat_min": -35.0,
     "lat_max": 6.0,
     "lon_min": -75.0,
     "lon_max": -28.0,
 }
-INTEGER_LIKE_COLUMNS = [
+INTEGER_LIKE_COLUMNS: list[str] = [
     "id",
     "pessoas",
     "mortos",
@@ -31,8 +32,8 @@ INTEGER_LIKE_COLUMNS = [
 
 
 def normalize_numeric(column_name: str) -> F.Column:
-    raw_text = F.trim(F.col(column_name).cast("string"))
-    cleaned = F.regexp_replace(raw_text, ",", ".")
+    raw_text: Column = F.trim(F.col(column_name).cast("string"))
+    cleaned: Column = F.regexp_replace(raw_text, ",", ".")
 
     return (
         F.when(F.col(column_name).isNull(), F.lit(None).cast("double"))
@@ -43,8 +44,8 @@ def normalize_numeric(column_name: str) -> F.Column:
 
 
 def canonicalize_road_code(column_name: str) -> F.Column:
-    extracted = F.regexp_extract(F.col(column_name).cast("string"), r"(\d+)", 1)
-    stripped = F.regexp_replace(extracted, r"^0+", "")
+    extracted: Column = F.regexp_extract(F.col(column_name).cast("string"), r"(\d+)", 1)
+    stripped: Column = F.regexp_replace(extracted, r"^0+", "")
     return F.when(stripped == "", F.lit(None).cast("string")).otherwise(stripped)
 
 
@@ -71,10 +72,17 @@ def _configure_spark_s3(spark: SparkSession, datalake: DatalakeAdapter) -> None:
     hadoop_conf.set("fs.s3a.path.style.access", "true")
 
 
+def build_partition_uri(base_uri: str, partition_name: str) -> str:
+    if "://" in base_uri:
+        stripped = base_uri.rstrip("/")
+        return f"{stripped}/{partition_name}"
+    return str(Path(base_uri) / partition_name)
+
+
 class PrfBronze2Silver(BaseETLJob):
     def __init__(self, spark: Any, config: dict[str, Any] | None = None) -> None:
         super().__init__(spark=spark, config=config, job_name="prf_bronze2silver")
-        self.datalake = DatalakeAdapter.from_env(
+        self.datalake: DatalakeAdapter = DatalakeAdapter.from_env(
             project_root=PROJECT_ROOT,
             config=self.config.get("datalake"),
         )
@@ -85,7 +93,9 @@ class PrfBronze2Silver(BaseETLJob):
             self.config.get("silver_subpath", "silver/prf_accidents_standardized")
         )
         self.write_mode = str(self.config.get("write_mode", "overwrite"))
-        self._temp_dir = tempfile.TemporaryDirectory(dir="/tmp")
+        self._temp_dir: tempfile.TemporaryDirectory[str] = tempfile.TemporaryDirectory(
+            dir="/tmp"
+        )
         self._staging_dir = Path(self._temp_dir.name)
 
     def validate_config(self) -> None:
@@ -96,6 +106,8 @@ class PrfBronze2Silver(BaseETLJob):
     def extract(self) -> DataFrame:
         uri = self.datalake.uri_for(self.bronze_subpath).replace("s3://", "s3a://")
         if uri.startswith("s3a://"):
+            if self.spark is None:
+                raise ValueError("Spark session is required to configure S3 access")
             _configure_spark_s3(self.spark, self.datalake)
         else:
             uri = str(
@@ -104,7 +116,11 @@ class PrfBronze2Silver(BaseETLJob):
                     self._staging_dir / "extract",
                 )
             )
-        return self.spark.read.parquet(uri)
+        if self.spark is None:
+            raise ValueError("Spark session is required to read data")
+        return self.spark.read.option("basePath", uri).parquet(
+            build_partition_uri(uri, "br=101")
+        )
 
     def transform(self, data: DataFrame) -> DataFrame:
         base_projection: list[F.Column] = []
@@ -127,32 +143,34 @@ class PrfBronze2Silver(BaseETLJob):
             else:
                 base_projection.append(F.col(column_name))
 
-        normalized = data.select(*base_projection)
+        normalized: DataFrame = data.select(*base_projection)
 
-        date_text = F.trim(F.col("data_inversa").cast("string"))
-        time_text = F.trim(F.col("horario").cast("string"))
-        timestamp_input = F.when(
+        date_text: Column = F.trim(F.col("data_inversa").cast("string"))
+        time_text: Column = F.trim(F.col("horario").cast("string"))
+        timestamp_input: Column = F.when(
             date_text.isNull()
             | time_text.isNull()
             | (date_text == "")
             | (time_text == ""),
             F.lit(None).cast("string"),
         ).otherwise(F.concat(date_text, F.lit(" "), time_text))
-        timestamp = F.expr("try_to_timestamp(_timestamp_input, 'yyyy-MM-dd HH:mm:ss')")
-        br_canonical = canonicalize_road_code("br")
-        has_valid_coords = F.col("latitude").between(
+        timestamp: Column = F.expr(
+            "try_to_timestamp(_timestamp_input, 'yyyy-MM-dd HH:mm:ss')"
+        )
+        br_canonical: Column = canonicalize_road_code("br")
+        has_valid_coords: Column = F.col("latitude").between(
             BRAZIL_BOUNDS["lat_min"], BRAZIL_BOUNDS["lat_max"]
         ) & F.col("longitude").between(
             BRAZIL_BOUNDS["lon_min"], BRAZIL_BOUNDS["lon_max"]
         )
 
-        passthrough_columns = [
+        passthrough_columns: list[Column] = [
             F.col(column_name)
             for column_name in normalized.columns
             if column_name not in {"latitude", "longitude"}
         ]
 
-        standardized = normalized.withColumn(
+        standardized: DataFrame = normalized.withColumn(
             "_timestamp_input", timestamp_input
         ).select(
             *passthrough_columns,
@@ -176,9 +194,11 @@ class PrfBronze2Silver(BaseETLJob):
             .alias("longitude"),
         )
 
-        standardized = standardized.drop("_timestamp_input")
+        standardized: DataFrame = standardized.drop("_timestamp_input")
         # Silver PRF accidents are intentionally restricted to canonical BR-101 records only.
-        standardized = standardized.filter(F.col("br_canonical") == F.lit("101"))
+        standardized: DataFrame = standardized.filter(
+            F.col("br_canonical") == F.lit("101")
+        )
 
         ordered_columns = (
             [
@@ -221,16 +241,7 @@ class PrfBronze2Silver(BaseETLJob):
 
 
 if __name__ == "__main__":
-    from pyspark.sql import SparkSession
-
-    spark = (
-        SparkSession.builder.appName("PRF Bronze to Silver")
-        .config(
-            "spark.jars.packages",
-            "org.apache.hadoop:hadoop-aws:3.4.2,com.amazonaws:aws-java-sdk-bundle:1.12.367",
-        )
-        .getOrCreate()
-    )
+    spark = build_spark_session("PRF Bronze to Silver")
     job = PrfBronze2Silver(spark=spark)
     job.run()
     spark.stop()

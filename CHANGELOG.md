@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1]
+
+### Added
+
+- A Spark/Sedona DNIT `source2bronze` job that materializes partitioned BR-101 road-network snapshots at `data/bronze/dnit_road_network`.
+
+### Changed
+
+- Spark session bootstrap is now centralized in `src/etl/base_job.py`, including optional Sedona dependencies for geospatial jobs.
+- `PrfBronze2Silver` now reads only the `br=101` bronze partition during extract, and the bronze/silver orchestration targets now run all jobs per layer through the `Makefile` and `dvc.yaml`.
+
 ## [0.3.0]
 
 ### Added
