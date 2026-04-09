@@ -6,37 +6,69 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-import geopandas as gpd
-import pandas as pd
 import requests
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql.column import Column
+from sedona.spark import SedonaContext
 
-from src.etl.base_job import BaseETLJob
+from src.etl.base_job import BaseETLJob, build_spark_session
 from src.etl.datalake import DatalakeAdapter
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT: Path = Path(__file__).resolve().parents[3]
 
-DNIT_URLS = {
+DNIT_URLS: dict[int, str] = {
     2017: "https://servicos.dnit.gov.br/dnitcloud/index.php/s/oTpPRmYs5AAdiNr/download?path=/SNV%20Bases%20Geom%C3%A9tricas%20(2013-Atual)%20(SHP)&files=201703A.zip",
     2021: "https://servicos.dnit.gov.br/dnitcloud/index.php/s/oTpPRmYs5AAdiNr/download?path=/SNV%20Bases%20Geom%C3%A9tricas%20(2013-Atual)%20(SHP)&files=202107A.zip",
     2026: "https://servicos.dnit.gov.br/dnitcloud/index.php/s/oTpPRmYs5AAdiNr/download?path=/SNV%20Bases%20Geom%C3%A9tricas%20(2013-Atual)%20(SHP)&files=202601A.zip",
 }
 
 
-def canonicalize_road_code(series: pd.Series) -> pd.Series:
-    extracted = series.astype("string").str.extract(r"(\d+)", expand=False)
-    stripped = extracted.str.lstrip("0")
-    return stripped.replace("", pd.NA)
+def canonicalize_road_code(column_name: str) -> Column:
+    extracted: Column = F.regexp_extract(F.col(column_name).cast("string"), r"(\d+)", 1)
+    stripped: Column = F.regexp_replace(extracted, r"^0+", "")
+    return F.when(stripped == "", F.lit(None).cast("string")).otherwise(stripped)
+
+
+def resolve_column_name(dataframe: DataFrame, expected_name: str) -> str:
+    normalized_map: dict[str, str] = {
+        column_name.casefold(): column_name for column_name in dataframe.columns
+    }
+    try:
+        return normalized_map[expected_name.casefold()]
+    except KeyError as exc:
+        available_columns: str = ", ".join(dataframe.columns)
+        raise ValueError(
+            f"Column '{expected_name}' was not found in DNIT shapefile. "
+            f"Available columns: {available_columns}"
+        ) from exc
 
 
 def load_filtered_dnit_snapshot(
-    snapshot_year: int, path: Path, road_code: str = "101"
-) -> gpd.GeoDataFrame:
-    dnit = gpd.read_file(path, columns=["vl_br", "sg_uf", "versao_snv", "geometry"])
-    dnit["br_canonical"] = canonicalize_road_code(dnit["vl_br"])
-    dnit = dnit.loc[dnit["br_canonical"].eq(road_code)].copy()
-    dnit["snapshot_year"] = snapshot_year
-    return dnit
+    snapshot_year: int,
+    path: Path,
+    spark: SparkSession,
+    road_code: str = "101",
+) -> DataFrame:
+    dnit: DataFrame = spark.read.format("shapefile").load(str(path))
+    vl_br_column: str = resolve_column_name(dnit, "vl_br")
+    sg_uf_column: str = resolve_column_name(dnit, "sg_uf")
+    versao_snv_column: str = resolve_column_name(dnit, "versao_snv")
+    geometry_column: str = resolve_column_name(dnit, "geometry")
+
+    selected = dnit.select(
+        F.col(vl_br_column).alias("vl_br"),
+        F.col(sg_uf_column).alias("sg_uf"),
+        F.col(versao_snv_column).alias("versao_snv"),
+        F.col(geometry_column).alias("geometry"),
+    )
+    with_br_canonical: DataFrame = selected.withColumn(
+        "br_canonical", canonicalize_road_code("vl_br")
+    )
+
+    return with_br_canonical.filter(
+        F.col("br_canonical") == F.lit(road_code)
+    ).withColumn("snapshot_year", F.lit(snapshot_year).cast("int"))
 
 
 class DnitSrc2Bronze(BaseETLJob):
@@ -53,8 +85,11 @@ class DnitSrc2Bronze(BaseETLJob):
         )
         self.write_mode = str(self.config.get("write_mode", "overwrite"))
         self.request_timeout = int(self.config.get("request_timeout", 120))
-        self._temp_dir = tempfile.TemporaryDirectory(dir="/tmp")
+        self._temp_dir: tempfile.TemporaryDirectory[str] = tempfile.TemporaryDirectory(
+            dir="/tmp"
+        )
         self._staging_dir = Path(self._temp_dir.name)
+        self.spark = SedonaContext.create(self.spark)
 
     def cleanup(self) -> None:
         self._temp_dir.cleanup()
@@ -64,7 +99,7 @@ class DnitSrc2Bronze(BaseETLJob):
         response.raise_for_status()
 
         with zipfile.ZipFile(io.BytesIO(response.content)) as zipped_payload:
-            shp_members = [
+            shp_members: list[str] = [
                 member
                 for member in zipped_payload.namelist()
                 if member.lower().endswith(".shp")
@@ -102,25 +137,28 @@ class DnitSrc2Bronze(BaseETLJob):
         return datasets
 
     def transform(self, data: list[dict[str, Any]]) -> DataFrame:
-        gdfs = [
-            load_filtered_dnit_snapshot(item["year"], item["shp_path"], road_code="101")
+        transformed: list[DataFrame] = [
+            load_filtered_dnit_snapshot(
+                item["year"], item["shp_path"], self.spark, road_code="101"
+            )
             for item in data
         ]
 
-        if not gdfs:
+        if not transformed:
             raise ValueError("No DNIT datasets were transformed")
 
-        br101_centerlines_gdf = gpd.GeoDataFrame(
-            pd.concat(gdfs, ignore_index=True), crs=gdfs[0].crs
-        )
+        combined = transformed[0]
+        for dataframe in transformed[1:]:
+            combined = combined.unionByName(dataframe)
 
-        # Convert geometry to WKT to be able to create a Spark DataFrame
-        br101_centerlines_gdf["geometry_wkt"] = br101_centerlines_gdf.geometry.to_wkt()
-        spark_df = self.spark.createDataFrame(
-            br101_centerlines_gdf.drop(columns=["geometry"])
+        return combined.select(
+            "vl_br",
+            "sg_uf",
+            "versao_snv",
+            "br_canonical",
+            "snapshot_year",
+            F.expr("ST_AsText(geometry)").alias("geometry"),
         )
-
-        return spark_df.withColumnRenamed("geometry_wkt", "geometry")
 
     def load(self, data: DataFrame) -> str:
         staging_output_dir = self._staging_dir / "bronze_dnit"
@@ -137,8 +175,7 @@ class DnitSrc2Bronze(BaseETLJob):
 
 
 if __name__ == "__main__":
-    spark = SparkSession.builder.appName("DNIT Src to Bronze").getOrCreate()
+    spark: SparkSession = build_spark_session("DNIT Src to Bronze", include_sedona=True)
     job = DnitSrc2Bronze(spark=spark)
     job.run()
     spark.stop()
-

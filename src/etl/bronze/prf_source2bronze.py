@@ -12,7 +12,7 @@ import requests
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
-from src.etl.base_job import BaseETLJob
+from src.etl.base_job import BaseETLJob, build_spark_session
 from src.etl.datalake import DatalakeAdapter
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -197,7 +197,7 @@ class PrfSrc2Bronze(BaseETLJob):
 
 
 if __name__ == "__main__":
-    spark = SparkSession.builder.appName("PRF Src to Bronze").getOrCreate()
+    spark = build_spark_session("PRF Src to Bronze")
     job = PrfSrc2Bronze(spark=spark)
     job.run()
     spark.stop()
