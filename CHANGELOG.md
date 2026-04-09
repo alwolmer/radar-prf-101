@@ -10,11 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - A Spark/Sedona DNIT `source2bronze` job that materializes partitioned BR-101 road-network snapshots at `data/bronze/dnit_road_network`.
+- A Spark/Sedona DNIT `bronze2silver` job that builds the canonical BR-101 centerline and 500-meter corridor artifacts at `data/silver/dnit_br101_corridor`, including yearly snapshots and union-all-years outputs.
 
 ### Changed
 
 - Spark session bootstrap is now centralized in `src/etl/base_job.py`, including optional Sedona dependencies for geospatial jobs.
 - `PrfBronze2Silver` now reads only the `br=101` bronze partition during extract, and the bronze/silver orchestration targets now run all jobs per layer through the `Makefile` and `dvc.yaml`.
+- `dvc.yaml`, `dvc.lock`, and the `Makefile` now include the DNIT silver stage and command targets for reproducing the BR-101 corridor artifacts.
 
 ## [0.3.0]
 
