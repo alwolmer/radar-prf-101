@@ -125,6 +125,24 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/3e/38/7859ff46355f76f8d19459005ca000b6e7012f2f1ca597746cbcd1fbfe5e/antlr4-python3-runtime-4.9.3.tar.gz", hash = "sha256:f224469b4168294902bb1efa80a8bf7855f24c99aef99cbefc1bcd3cce77881b", size = 117034, upload-time = "2021-11-06T17:52:23.524Z" }
 
 [[package]]
+name = "apache-sedona"
+version = "1.8.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "attrs" },
+    { name = "shapely" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bd/10/59513c39bd3af6454c242f256d3b2ad41d4ab6ba2d361872b01646a4a0ac/apache_sedona-1.8.1.tar.gz", hash = "sha256:f6c7a1fd3ff392eea55e3e5ca269b035b1286017d61f129cf4bcf7f0f3faad31", size = 170200, upload-time = "2026-01-09T06:16:30.499Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fc/5c/91af34e4fdeeb37840f912d865ab4320a2e1b71381a824a04a1d45cfa6b4/apache_sedona-1.8.1-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:22a1e6bbb3fbcd446ec1e205058f085ce5628d2f1d97ec3afd0fc38e2dd65471", size = 288704, upload-time = "2026-01-09T06:15:48.306Z" },
+    { url = "https://files.pythonhosted.org/packages/36/f9/566f1508dcda0d9382f6fb3d6e6870fa3aa03f49e525865544926ecd2ec7/apache_sedona-1.8.1-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:e0c00c96a2cf85afa145e16820da7cc69365d356300a2d02521d2968d4daa81f", size = 288951, upload-time = "2026-01-09T06:15:49.744Z" },
+    { url = "https://files.pythonhosted.org/packages/08/46/14d938978de3cbbf5ca132cabc5f60c5811a1623721619afa9fcf53a7bf7/apache_sedona-1.8.1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:1b9008793bf3bb8336e51aad84fa4625dd6f838674fa8e81d04e1c8eded4c578", size = 332579, upload-time = "2026-01-09T06:15:51.226Z" },
+    { url = "https://files.pythonhosted.org/packages/61/bb/21d97ea53bca82f82748ba636fedde557e30e0ddfd822b0124c0babc2f3b/apache_sedona-1.8.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:cb33b1f60e1a114d19bd50146520223d64c47bda2112c151197a2d288b9ac5be", size = 331902, upload-time = "2026-01-09T06:15:52.725Z" },
+    { url = "https://files.pythonhosted.org/packages/cb/85/8031cebaa443c705c799b3d6390aee73416a4ac8ad4ea0d37f21130431f5/apache_sedona-1.8.1-cp313-cp313-win_amd64.whl", hash = "sha256:913727c2d1cad099d9c43487aecf268c699d3ca5806dca4561bd9624f634ebda", size = 286918, upload-time = "2026-01-09T06:15:53.993Z" },
+    { url = "https://files.pythonhosted.org/packages/34/20/39816924001630230670df59d9ae4f45fd177723569855a10db95fe9415e/apache_sedona-1.8.1-cp313-cp313-win_arm64.whl", hash = "sha256:80ff5b2e94360ba8f80a225290341f85b8b478a49b38c99b3159a1bd7a287537", size = 284760, upload-time = "2026-01-09T06:15:55.274Z" },
+]
+
+[[package]]
 name = "appdirs"
 version = "1.4.4"
 source = { registry = "https://pypi.org/simple" }
@@ -2260,6 +2278,7 @@ name = "radar-prf-101"
 version = "0.2.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "apache-sedona" },
     { name = "boto3" },
     { name = "dvc" },
     { name = "geopandas" },
@@ -2291,6 +2310,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "apache-sedona", specifier = ">=1.8.1" },
     { name = "boto3", specifier = ">=1.40.0" },
     { name = "dvc", specifier = ">=3.67.0" },
     { name = "geopandas", specifier = ">=1.1.3" },

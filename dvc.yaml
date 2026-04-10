@@ -20,3 +20,31 @@ stages:
       - data/bronze/prf_accidents
     outs:
       - data/silver/prf_accidents_standardized
+  ibge_mun_bronze2silver:
+    cmd: DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=data UV_CACHE_DIR=/tmp/uv-cache uv run python -m src.etl.silver.ibge_mun_bronze2silver
+    deps:
+      - pyproject.toml
+      - uv.lock
+      - src/etl/base_job.py
+      - src/etl/datalake.py
+      - src/etl/sedona_session.py
+      - src/etl/transform/geospatial.py
+      - src/etl/silver/ibge_base.py
+      - src/etl/silver/ibge_mun_bronze2silver.py
+      - data/bronze/ibge_territorial
+    outs:
+      - data/silver/municipalities
+  ibge_rgi_bronze2silver:
+    cmd: DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=data UV_CACHE_DIR=/tmp/uv-cache uv run python -m src.etl.silver.ibge_rgi_bronze2silver
+    deps:
+      - pyproject.toml
+      - uv.lock
+      - src/etl/base_job.py
+      - src/etl/datalake.py
+      - src/etl/sedona_session.py
+      - src/etl/transform/geospatial.py
+      - src/etl/silver/ibge_base.py
+      - src/etl/silver/ibge_rgi_bronze2silver.py
+      - data/bronze/ibge_territorial
+    outs:
+      - data/silver/rgis

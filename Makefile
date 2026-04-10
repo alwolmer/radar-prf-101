@@ -1,4 +1,4 @@
-.PHONY: install lint linter test pre-commit-install pre-commit-run dvc-status dvc-checkout dvc-repro dvc-repro-bronze dvc-repro-silver prf-source2bronze prf-bronze2silver extract-urls extract-data
+.PHONY: install lint linter test pre-commit-install pre-commit-run dvc-status dvc-checkout dvc-repro dvc-repro-bronze dvc-repro-silver prf-source2bronze prf-bronze2silver ibge-mun-bronze2silver ibge-rgi-bronze2silver extract-urls extract-data
 
 install:
 	UV_CACHE_DIR=/tmp/uv-cache uv sync --all-groups
@@ -40,3 +40,9 @@ prf-source2bronze:
 
 prf-bronze2silver:
 	DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=data UV_CACHE_DIR=/tmp/uv-cache uv run python -m src.etl.silver.prf_bronze2silver
+
+ibge-mun-bronze2silver:
+	DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=data UV_CACHE_DIR=/tmp/uv-cache uv run python -m src.etl.silver.ibge_mun_bronze2silver
+
+ibge-rgi-bronze2silver:
+	DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=data UV_CACHE_DIR=/tmp/uv-cache uv run python -m src.etl.silver.ibge_rgi_bronze2silver
