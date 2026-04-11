@@ -1,0 +1,17 @@
+services:
+  spark-env:
+    image: brunacarvalhobf/projeto-prf-spark-env:latest
+    container_name: projeto_prf_medallion_spark
+    # Comando para manter o container vivo e aceitar comandos
+    command: tail -f /dev/null 
+    volumes:
+      - .:/app
+    environment:
+      - SPARK_MODE=local
+      - DATALAKE_BACKEND=local
+      - DATALAKE_LOCAL_ROOT=/app/data
+      - PYSPARK_PYTHON=python3
+      - PYSPARK_SUBMIT_ARGS=--repositories https://artifacts.unidata.ucar.edu/repository/unidata-all/ --packages org.apache.sedona:sedona-spark-shaded-3.5_2.12:1.5.1,org.datasyslab:geotools-wrapper:1.5.1-28.2 --conf spark.sql.extensions=org.apache.sedona.spark.SedonaExtensions pyspark-shell
+    working_dir: /app
+    tty: true
+    stdin_open: true
