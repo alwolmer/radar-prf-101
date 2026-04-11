@@ -7,28 +7,28 @@ stages:
     deps:
     - path: pyproject.toml
       hash: md5
-      md5: ff674d744b6ce84a94b11166bb7f20b9
-      size: 955
+      md5: 1143b48bc9ecbdaeca26f2b34a3a833f
+      size: 983
     - path: src/etl/base_job.py
       hash: md5
-      md5: de49b3b4d975fe1ac6f3a5abb2b564f7
-      size: 1754
+      md5: deb638a5ea68d93ce109754e8a4232b3
+      size: 3555
     - path: src/etl/bronze/prf_source2bronze.py
       hash: md5
-      md5: 61c01bd4c7cc127fef6130839a963dee
-      size: 6867
+      md5: 19e4bfd29a9c7d5d007a3aa132cc7d14
+      size: 7074
     - path: src/etl/datalake.py
       hash: md5
-      md5: 3e9c95328a410498db67b84190c278ce
-      size: 9279
+      md5: 49c44f0e82e6886f79df1be0988410a5
+      size: 9851
     - path: uv.lock
       hash: md5
-      md5: a7d9684c5a125e34f98d98664c1ec384
-      size: 345134
+      md5: 2f6a3c56d4fad4fe967b854d2e7d01f3
+      size: 347685
     outs:
     - path: data/bronze/prf_accidents
       hash: md5
-      md5: 4edb8faafd98663ad98e2f13e55f619c.dir
+      md5: e078c17d36967b7e230f9905cd7e9909.dir
       size: 78896303
       nfiles: 5168
   prf_bronze2silver:
@@ -38,32 +38,99 @@ stages:
     deps:
     - path: data/bronze/prf_accidents
       hash: md5
-      md5: 4edb8faafd98663ad98e2f13e55f619c.dir
+      md5: e078c17d36967b7e230f9905cd7e9909.dir
       size: 78896303
       nfiles: 5168
     - path: pyproject.toml
       hash: md5
-      md5: ff674d744b6ce84a94b11166bb7f20b9
-      size: 955
+      md5: 1143b48bc9ecbdaeca26f2b34a3a833f
+      size: 983
     - path: src/etl/base_job.py
       hash: md5
-      md5: de49b3b4d975fe1ac6f3a5abb2b564f7
-      size: 1754
+      md5: deb638a5ea68d93ce109754e8a4232b3
+      size: 3555
     - path: src/etl/datalake.py
       hash: md5
-      md5: 3e9c95328a410498db67b84190c278ce
-      size: 9279
+      md5: 49c44f0e82e6886f79df1be0988410a5
+      size: 9851
     - path: src/etl/silver/prf_bronze2silver.py
       hash: md5
-      md5: 444c8cb390180b47132ebfcc926adeaa
-      size: 6912
+      md5: f595f12a401c602f930af29c83c88054
+      size: 9159
     - path: uv.lock
       hash: md5
-      md5: a7d9684c5a125e34f98d98664c1ec384
-      size: 345134
+      md5: 2f6a3c56d4fad4fe967b854d2e7d01f3
+      size: 347685
     outs:
     - path: data/silver/prf_accidents_standardized
       hash: md5
-      md5: 700cbb02b54fe7401d4cb573c24db6b4.dir
+      md5: 339d737d60a1d0bd546bcaca4eacca65.dir
       size: 5120502
       nfiles: 38
+  dnit_source2bronze:
+    cmd: DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=data 
+      UV_CACHE_DIR=/tmp/uv-cache uv run python -m 
+      src.etl.bronze.dnit_source2bronze
+    deps:
+    - path: pyproject.toml
+      hash: md5
+      md5: 1143b48bc9ecbdaeca26f2b34a3a833f
+      size: 983
+    - path: src/etl/base_job.py
+      hash: md5
+      md5: deb638a5ea68d93ce109754e8a4232b3
+      size: 3555
+    - path: src/etl/bronze/dnit_source2bronze.py
+      hash: md5
+      md5: b0bc57bb075f83b2c416d7713f1d8779
+      size: 6716
+    - path: src/etl/datalake.py
+      hash: md5
+      md5: 49c44f0e82e6886f79df1be0988410a5
+      size: 9851
+    - path: uv.lock
+      hash: md5
+      md5: 2f6a3c56d4fad4fe967b854d2e7d01f3
+      size: 347685
+    outs:
+    - path: data/bronze/dnit_road_network
+      hash: md5
+      md5: 58afb42d4a15b9868cc557910bec9ea4.dir
+      size: 13149068
+      nfiles: 4
+  dnit_bronze2silver:
+    cmd: DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=data 
+      UV_CACHE_DIR=/tmp/uv-cache uv run python -m 
+      src.etl.silver.dnit_bronze2silver
+    deps:
+    - path: data/bronze/dnit_road_network
+      hash: md5
+      md5: 58afb42d4a15b9868cc557910bec9ea4.dir
+      size: 13149068
+      nfiles: 4
+    - path: pyproject.toml
+      hash: md5
+      md5: 1143b48bc9ecbdaeca26f2b34a3a833f
+      size: 983
+    - path: src/etl/base_job.py
+      hash: md5
+      md5: deb638a5ea68d93ce109754e8a4232b3
+      size: 3555
+    - path: src/etl/datalake.py
+      hash: md5
+      md5: 49c44f0e82e6886f79df1be0988410a5
+      size: 9851
+    - path: src/etl/silver/dnit_bronze2silver.py
+      hash: md5
+      md5: da5a465cd3e06d25f7cd327b1671fee1
+      size: 9384
+    - path: uv.lock
+      hash: md5
+      md5: 2f6a3c56d4fad4fe967b854d2e7d01f3
+      size: 347685
+    outs:
+    - path: data/silver/dnit_br101_corridor
+      hash: md5
+      md5: 1426c55dc762b4224a4c938a965c3040.dir
+      size: 46826503
+      nfiles: 12

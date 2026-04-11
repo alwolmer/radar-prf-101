@@ -1,4 +1,4 @@
-.PHONY: install lint linter test pre-commit-install pre-commit-run dvc-status dvc-checkout dvc-repro dvc-repro-bronze dvc-repro-silver prf-source2bronze prf-bronze2silver ibge-mun-bronze2silver ibge-rgi-bronze2silver extract-urls extract-data
+.PHONY: install lint linter test pre-commit-install pre-commit-run dvc-status dvc-checkout dvc-repro dvc-repro-bronze dvc-repro-silver bronze silver prf-source2bronze dnit-source2bronze prf-bronze2silver dnit-bronze2silver ibge-mun-bronze2silver ibge-rgi-bronze2silver extract-urls extract-data
 
 install:
 	UV_CACHE_DIR=/tmp/uv-cache uv sync --all-groups
@@ -30,16 +30,26 @@ dvc-repro:
 	DVC_SITE_CACHE_DIR=/tmp/dvc UV_CACHE_DIR=/tmp/uv-cache uv run python -m dvc repro
 
 dvc-repro-bronze:
-	DVC_SITE_CACHE_DIR=/tmp/dvc UV_CACHE_DIR=/tmp/uv-cache uv run python -m dvc repro prf_source2bronze
+	DVC_SITE_CACHE_DIR=/tmp/dvc UV_CACHE_DIR=/tmp/uv-cache uv run python -m dvc repro prf_source2bronze dnit_source2bronze
 
 dvc-repro-silver:
-	DVC_SITE_CACHE_DIR=/tmp/dvc UV_CACHE_DIR=/tmp/uv-cache uv run python -m dvc repro prf_bronze2silver
+	DVC_SITE_CACHE_DIR=/tmp/dvc UV_CACHE_DIR=/tmp/uv-cache uv run python -m dvc repro prf_bronze2silver dnit_bronze2silver ibge_mun_bronze2silver ibge_rgi_bronze2silver
+
+bronze: prf-source2bronze dnit-source2bronze
+
+silver: prf-bronze2silver dnit-bronze2silver ibge-mun-bronze2silver ibge-rgi-bronze2silver
 
 prf-source2bronze:
 	DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=data UV_CACHE_DIR=/tmp/uv-cache uv run python -m src.etl.bronze.prf_source2bronze
 
+dnit-source2bronze:
+	DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=data UV_CACHE_DIR=/tmp/uv-cache uv run python -m src.etl.bronze.dnit_source2bronze
+
 prf-bronze2silver:
 	DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=data UV_CACHE_DIR=/tmp/uv-cache uv run python -m src.etl.silver.prf_bronze2silver
+
+dnit-bronze2silver:
+	DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=data UV_CACHE_DIR=/tmp/uv-cache uv run python -m src.etl.silver.dnit_bronze2silver
 
 ibge-mun-bronze2silver:
 	DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=data UV_CACHE_DIR=/tmp/uv-cache uv run python -m src.etl.silver.ibge_mun_bronze2silver
