@@ -4,9 +4,55 @@ Utilities for extracting, caching, and analyzing PRF open-data datasets.
 
 ## Requirements
 
-- Python 3.13
-- [`uv`](https://docs.astral.sh/uv/)
+- `make` is required to run the project targets documented in this repository
+- Docker with the `docker compose` plugin for the `Makefile` targets
+- Python 3.11 or 3.12 if you want to use `uv` directly on the host for dependency maintenance
+- [`uv`](https://docs.astral.sh/uv/) if you want to manage Python dependencies outside the container
 - Node.js with `npx` available if you want to sync local agent skills
+
+## Run The Project With Docker
+
+The supported local runtime is the `spark-env` Docker Compose service. Most
+project commands are executed through the repository `Makefile`, which shells
+into that container with `docker compose exec`.
+
+Build the image, start the service, and install the locked dependencies inside
+the container:
+
+```bash
+make docker-build
+make install
+```
+
+Common development commands:
+
+```bash
+make lint
+make test
+make bronze
+make silver
+make dvc-repro
+```
+
+`make install`, `make lint`, `make test`, `make bronze`, `make silver`, and the
+DVC targets all run inside the container. Runtime targets only ensure the
+service is running before executing `docker compose exec`; rebuild the image
+with `make docker-build` when the Docker context changes.
+
+The Spark runtime coordinates used by the ETL jobs are configured in
+`.env.docker` and loaded by `docker-compose.yml`. During the image build,
+`scripts/fetch_spark_jars.sh` pre-downloads the Spark, Sedona, Geotools, and
+Hadoop AWS JARs into the image, and `src/etl/base_job.py` reads the same
+runtime settings to configure Spark defaults such as driver memory, shuffle
+parallelism, Parquet block size, and ETL log level.
+
+After changing `.env.docker`, rebuild and restart the service before running the
+ETL targets again:
+
+```bash
+make docker-build
+make docker-up
+```
 
 ## Manage Python Dependencies With uv
 
@@ -39,14 +85,6 @@ After editing dependencies manually, regenerate the lockfile:
 ```bash
 uv lock
 uv sync --all-groups
-```
-
-The repository `Makefile` uses the same `uv` environment:
-
-```bash
-make install
-make lint
-make test
 ```
 
 ## Sync Agents From `skills-lock.json`

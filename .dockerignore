@@ -1,15 +1,15 @@
-# Ignora o ambiente virtual local
+# Ignore local virtual environments.
 .venv/
 venv/
 ENV/
 
-# Ignora caches de Python e Spark
+# Ignore Python and Spark caches.
 **/__pycache__/
 **/.pytest_cache/
 .ipynb_checkpoints/
 .ivy2/
 
-# Ignora os dados (essencial!)
+# Ignore generated data and extracted archives.
 data/
 tmp/
 *.zip
@@ -18,9 +18,19 @@ tmp/
 *.shx
 *.prj
 
-# Ignora o histórico do Git
+# Ignore Git metadata.
 .git/
 .gitignore
 
-# Ignora arquivos de configuração local
+# Ignore local-only configuration and files not needed for the image build.
 .env
+.codex/
+config/
+documentation/
+notebooks/
+src/
+tests/
+*.md
+dvc.lock
+dvc.yaml
+Makefile
