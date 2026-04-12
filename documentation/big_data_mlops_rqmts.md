@@ -18,7 +18,7 @@ fontes diversas até a disponibilização dos insights gerados para análise.
     - [ ] Arquitetura parcial implementada
     - [ ] Equipe responsável e divisão de tarefas
 - [ ] Repositório no GitHub
-    - [ ] Estrutura com pasta de: dados, src, documentação
+    - [ x ] Estrutura com pasta de: dados, src, documentação
     - [ ] README com: 
         - [ ] Nome e descrição do projeto;
         - [ ] Fonte dos dados;
@@ -29,9 +29,9 @@ fontes diversas até a disponibilização dos insights gerados para análise.
     - [ ] Pode ser simulação parcial caso o pipeline ainda não esteja completo.
     - [ ] 8 min de apresentação
 - [ ] Checklist Preenchido
-    - Ingestão: ( ) Em progresso / ( ) Finalizado / ( ) Pendente
-    - Armazenamento: ( ) Em progresso / ( ) Finalizado / ( ) Pendente
-    - Transformação: ( ) Em progresso / ( ) Finalizado / ( ) Pendente
+    - Extração: ( x ) Em progresso / ( ) Finalizado / ( ) Pendente
+    - Transformação: ( x ) Em progresso / ( ) Finalizado / ( ) Pendente
+    - Armazenamento: ( ) Em progresso / ( ) Finalizado / ( x ) Pendente
 
 * Segunda Entrega *
 - [ ] README
