@@ -22,7 +22,6 @@ tmp/
 .git/
 .gitignore
 
-
 # Ignore local-only configuration and files not needed for the image build.
 .env
 .codex/
@@ -35,11 +34,3 @@ tests/
 dvc.lock
 dvc.yaml
 Makefile
-
-
-
-.ruff_cache
-
-
-
-

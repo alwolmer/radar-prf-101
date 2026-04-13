@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 set -eu
 
 ENV_FILE="${1:-.env.docker}"

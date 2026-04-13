@@ -3,7 +3,7 @@ FROM maven:3.9-eclipse-temurin-17 AS spark-jars
 WORKDIR /tmp/spark-jars
 COPY .env.docker ./
 COPY scripts/fetch_spark_jars.sh ./scripts/fetch_spark_jars.sh
-RUN bash ./scripts/fetch_spark_jars.sh .env.docker /opt/spark-jars
+RUN sh ./scripts/fetch_spark_jars.sh .env.docker /opt/spark-jars
 
 FROM python:3.11-slim
 
