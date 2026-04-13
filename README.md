@@ -1,8 +1,6 @@
 # radar-prf-101
 
-**Nome do projeto:** `radar-prf-101`
-
-**Descrição:** Ingestão, versionamento e análise de dados abertos da Polícia Rodoviária Federal (PRF) sobre acidentes em rodovias federais, com adição de dados geométricos do DNIT (SNV) para contexto espacial — em especial a BR-101. O repositório implementa uma pipeline ETL em camadas bronze e silver, orquestrado pelo DVC, com leitura/escrita em datalake local ou S3 (opcional).
+Esse projeto realiza a ingestão, versionamento e análise de dados abertos da Polícia Rodoviária Federal (PRF) sobre acidentes em rodovias federais, com adição de dados geométricos do DNIT (SNV) para contexto espacial da BR-101. O repositório implementa uma pipeline ETL em camadas bronze e silver, orquestrado pelo DVC, com leitura/escrita em datalake local ou S3 (opcional).
 
 Documentação complementar do pipeline e decisões de arquitetura: [`ARQUITETURA.md`](ARQUITETURA.md).
 
@@ -12,7 +10,7 @@ Documentação complementar do pipeline e decisões de arquitetura: [`ARQUITETUR
 
 | Fonte | Descrição |
 | --- | --- |
-| **PRF — Dados abertos** | Página oficial de dados abertos da PRF, que lista conjuntos históricos de acidentes “agrupados por ocorrência” por ano. O camada bronze interpreta as tabelas HTML da página e obtém os links de download. URL padrão usada no código: `https://www.gov.br/prf/pt-br/acesso-a-informacao/dados-abertos/dados-abertos-da-prf`. |
+| **PRF — Dados abertos** | Página oficial de dados abertos da PRF, que lista dados históricos de acidentes “agrupados por ocorrência” por ano. O camada bronze interpreta as tabelas HTML da página e obtém os links de download. URL padrão usada no código: `https://www.gov.br/prf/pt-br/acesso-a-informacao/dados-abertos/dados-abertos-da-prf`. |
 | **Google Drive (espelho PRF)** | Os arquivos publicados pela PRF costumam ser disponibilizados via links do Google Drive. O extrator baixa arquivos ZIP, extrai o CSV e processa com separador `;` e encoding `ISO-8859-1`. |
 | **DNIT — SNV (shapefile)** | Bases geométricas do Sistema Nacional de Viação (SNV), obtidas por download direto dos endpoints configurados em `src/etl/bronze/dnit_source2bronze.py` (snapshots por ano). |
 
@@ -21,8 +19,6 @@ Os dados são públicos; a disponibilidade e o formato podem mudar quando o órg
 ---
 
 ## Ingestão e extração
-
-**O que é:** coleta bruta a partir das fontes acima, sem padronização analítica final.
 
 - **PRF:** requisição HTTP à página de dados abertos; `pandas.read_html` para localizar referências e links; download ZIP via URL do Google Drive; descompactação e leitura do CSV no Spark.
 - **DNIT:** download dos ZIPs do SNV; leitura de shapefile no Spark (com Apache Sedona), filtragem por rodovia (ex.: BR-101) e metadados de snapshot.
@@ -33,16 +29,12 @@ Stages DVC correspondentes: `prf_source2bronze`, `dnit_source2bronze` (ver [`dvc
 
 ## Transformação
 
-**O que é:** limpeza, tipagem, regras de negócio e preparação para análise.
-
-- **Bronze → Silver (PRF):** leitura do parquet bronze; normalização numérica (vírgula decimal, nulos); padronização de códigos de rodovia; validações geográficas (limites do Brasil); agregações temporais (ex.: início de semana); escrita silver particionada. Implementação: [`src/etl/silver/prf_bronze2silver.py`](src/etl/silver/prf_bronze2silver.py).
-- **Bronze → Silver (DNIT):** reprojeção CRS, buffers em metros ao redor da geometria da BR-101 e materialização de camada de corredor para uso espacial. Implementação: [`src/etl/silver/dnit_bronze2silver.py`](src/etl/silver/dnit_bronze2silver.py).
+- **(PRF) Bronze → Silver:** leitura do parquet bronze; normalização numérica (vírgula decimal, nulos); padronização de códigos de rodovia; validações geográficas (limites do Brasil); agregações temporais (ex.: início de semana); escrita silver particionada. Implementação: [`src/etl/silver/prf_bronze2silver.py`](src/etl/silver/prf_bronze2silver.py).
+- **(DNIT) Bronze → Silver:** reprojeção CRS, buffers em metros ao redor da geometria da BR-101 e materialização de camada de corredor para uso espacial. Implementação: [`src/etl/silver/dnit_bronze2silver.py`](src/etl/silver/dnit_bronze2silver.py).
 
 ---
 
 ## Carregamento
-
-**O que é:** persistência das saídas do pipeline no “datalake” configurado.
 
 - **Backend local (padrão):** gravação sob o diretório `data/`, com subpastas `bronze/` e `silver/`, em **Parquet** (particionado conforme cada job).
 - **Backend S3 (opcional):** quando `DATALAKE_BACKEND=s3` e variáveis de bucket/região estão definidas, o mesmo adaptador grava no objeto storage; o Spark usa o filesystem S3A com credenciais via `boto3`. Ver [`src/etl/datalake.py`](src/etl/datalake.py).
@@ -52,8 +44,6 @@ O DVC rastreia os artefatos versionados e o grafo de stages que os produz.
 ---
 
 ## Destino (visualização e consumo)
-
-**O que é:** onde os dados ficam disponíveis para exploração hoje e o que falta para um produto de BI.
 
 - **Hoje:** datasets silver (e bronze) em disco local em `data/silver/` (ex.: `prf_accidents_standardized`, `dnit_br101_corridor`), consumíveis por **notebooks** em [`notebooks/`](notebooks/) (EDA com pandas/Polars/GeoPandas etc.) ou por qualquer ferramenta que leia Parquet.
 - **Ainda não implementado neste repositório:** camada gold, API, dashboard web ou catálogo de dados corporativo. Esses seriam os destinos naturais para visualização ampla (ver sugestões em [`ARQUITETURA.md`](ARQUITETURA.md)).
