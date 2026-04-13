@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from functools import reduce
-from importlib.resources import path
 import io
 import tempfile
 import zipfile
@@ -13,8 +11,6 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.column import Column
 from sedona.spark import SedonaContext
-from sedona.core.formatMapper.shapefileParser import ShapefileReader as SedonaShapefileReader
-from sedona.utils.adapter import Adapter
 
 from src.etl.base_job import BaseETLJob, build_spark_session
 from src.etl.datalake import DatalakeAdapter
@@ -54,12 +50,7 @@ def load_filtered_dnit_snapshot(
     spark: SparkSession,
     road_code: str = "101",
 ) -> DataFrame:
-    # passar o .parent para garantir que o Sedona veja todos os arquivos (.shp, .dbf, .shx) na pasta
-    raw_spatial_rdd = SedonaShapefileReader.readToGeometryRDD(spark.sparkContext, str(path.parent))
-    
-    #usa adaptar para converter o RDD em DataFrame
-    dnit = Adapter.toDf(raw_spatial_rdd, spark)
-
+    dnit: DataFrame = spark.read.format("shapefile").load(str(path))
     vl_br_column: str = resolve_column_name(dnit, "vl_br")
     sg_uf_column: str = resolve_column_name(dnit, "sg_uf")
     versao_snv_column: str = resolve_column_name(dnit, "versao_snv")
@@ -98,6 +89,7 @@ class DnitSrc2Bronze(BaseETLJob):
             dir="/tmp"
         )
         self._staging_dir = Path(self._temp_dir.name)
+        self.spark = SedonaContext.create(self.spark)
 
     def cleanup(self) -> None:
         self._temp_dir.cleanup()
@@ -155,7 +147,9 @@ class DnitSrc2Bronze(BaseETLJob):
         if not transformed:
             raise ValueError("No DNIT datasets were transformed")
 
-        combined = reduce(DataFrame.unionByName, transformed)
+        combined = transformed[0]
+        for dataframe in transformed[1:]:
+            combined = combined.unionByName(dataframe)
 
         return combined.select(
             "vl_br",
@@ -181,14 +175,7 @@ class DnitSrc2Bronze(BaseETLJob):
 
 
 if __name__ == "__main__":
-
-    base_spark: SparkSession = build_spark_session("DNIT Src to Bronze", include_sedona=True)
-    
-    #Registrar o Sedona
-    #injeta as funções espaciais e os leitores (Shapefile) de forma segura
-    spark = SedonaContext.create(base_spark)
-
+    spark: SparkSession = build_spark_session("DNIT Src to Bronze", include_sedona=True)
     job = DnitSrc2Bronze(spark=spark)
     job.run()
-    
     spark.stop()
