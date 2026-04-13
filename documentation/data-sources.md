@@ -1,132 +1,177 @@
-# Data Sources
+# Fontes de Dados
 
-This document lists the external datasets used in the project, what each one
-contributes to the BR-101 workflow, and how the data is brought into the local
-`data/bronze` cache.
+Este documento lista as fontes externas usadas no projeto, o papel de cada uma no pipeline da BR-101 e como elas entram nas camadas bronze e silver atualmente implementadas.
 
-## 1. PRF Accident Data
+## Visão geral
 
-### Official source
+| Fonte | Papel no projeto | Bronze atual | Silver atual |
+| --- | --- | --- | --- |
+| PRF | fato principal de acidentes | `data/bronze/prf_accidents` | `data/silver/prf_accidents_standardized` |
+| DNIT | geometria da BR-101 | `data/bronze/dnit_road_network` | `data/silver/dnit_br101_corridor` |
+| IBGE municípios | base territorial municipal | `data/bronze/ibge/municipios` | `data/silver/ibge_territorial_preprocessed/municipalities_preprocessed` |
+| IBGE RGI | base territorial regional | `data/bronze/ibge/rgi` | `data/silver/ibge_territorial_preprocessed/rgis_preprocessed` |
 
-- PRF open-data portal:
+## 1. PRF
+
+### Fonte oficial
+
+- Portal de dados abertos da PRF:
   `https://www.gov.br/prf/pt-br/acesso-a-informacao/dados-abertos/dados-abertos-da-prf`
 
-### What it provides
+### O que fornece
 
-- PRF accident occurrence tables by year
-- PRF person-level accident tables by year
+- tabelas anuais de acidentes por ocorrência
+- colunas operacionais e descritivas usadas para construir o histórico de acidentes da BR-101
 
-The project currently uses the occurrence tables as the primary input for the
-BR-101 EDA workflow. The person table is available in the bronze layer but is
-not an input for the current notebook flow (may be considered later)
+### Uso no projeto
 
-### Local ingestion workflow
+A PRF é a fonte principal de fatos. Hoje ela é usada para:
 
-#### URL discovery
+- baixar os arquivos anuais de ocorrências
+- consolidar as ocorrências em uma bronze particionada
 
-- Script: [`src/etl/extract/extract_urls.py`](../src/etl/extract/extract_urls.py)
-- Output: `data/cleaned_urls.csv`
+### Jobs implementados
 
-That script scrapes the PRF open-data page, filters the available records to
-the years `2017` through `2026`, and keeps the two groupings used by the
-project:
+- Bronze: [src/etl/bronze/prf_source2bronze.py](../src/etl/bronze/prf_source2bronze.py:1)
+- Silver: [src/etl/silver/prf_bronze2silver.py](../src/etl/silver/prf_bronze2silver.py:1)
 
-- `Agrupados por ocorrência`
-- `Agrupados por pessoa - Todas as causas e tipos de acidentes`
+### Saídas materializadas
 
-#### Download and bronze caching
+- Bronze: `data/bronze/prf_accidents`
+- Silver: `data/silver/prf_accidents_standardized`
 
-- Script: [`src/etl/extract/extract_data.py`](../src/etl/extract/extract_data.py)
-- Input: `data/cleaned_urls.csv`
-- Output directory: `data/bronze`
+## 2. DNIT
 
-That script reads the cached URL list, downloads the raw ZIP payloads, extracts
-the CSV files, and stores them in compressed form under `data/bronze` with the
-pattern:
+### Fonte oficial
 
-- `{year}_Agrupados por ocorrência.csv.gz`
-- `{year}_Agrupados por pessoa.csv.gz`
-
-### Local refresh commands
-
-- `make extract-urls`
-- `make extract-data`
-
-## 2. DNIT BR-101 Road Geometry
-
-### Official source
-
-- DNIT cloud archive for SNV geometric bases:
+- Repositório DNIT das bases geométricas do SNV:
   `https://servicos.dnit.gov.br/dnitcloud/index.php/s/oTpPRmYs5AAdiNr`
 
-### What it provides
+### O que fornece
 
-- MultiLineString road geometry used to represent the BR-101 trace
-- Historical snapshots used to build the canonical BR-101 corridor
+- geometrias lineares da malha rodoviária federal
+- snapshots históricos usados para derivar o traçado da BR-101
 
-### Snapshots currently used
+### Snapshots usados hoje
 
 - `201703A.zip`
 - `202107A.zip`
 - `202601A.zip`
 
-Direct download examples used by the project:
+### Uso no projeto
 
-- 2017:
-  `https://servicos.dnit.gov.br/dnitcloud/index.php/s/oTpPRmYs5AAdiNr/download?path=/SNV Bases Geométricas (2013-Atual) (SHP)&files=201703A.zip`
-- 2021:
-  `https://servicos.dnit.gov.br/dnitcloud/index.php/s/oTpPRmYs5AAdiNr/download?path=/SNV Bases Geométricas (2013-Atual) (SHP)&files=202107A.zip`
-- 2026:
-  `https://servicos.dnit.gov.br/dnitcloud/index.php/s/oTpPRmYs5AAdiNr/download?path=/SNV Bases Geométricas (2013-Atual) (SHP)&files=202601A.zip`
+O DNIT é a fonte geométrica da rodovia. Hoje ele é usado para:
 
-### Project role
+- isolar os segmentos da BR-101 na bronze
+- dissolver as geometrias por snapshot
+- gerar centerlines e buffers por snapshot
+- construir a união das centerlines e a união do corredor da BR-101
 
-These files are used to:
+### Jobs implementados
 
-- isolate BR-101 features from DNIT's national road base
-- dissolve each snapshot into a single road geometry
-- buffer each yearly trace
-- union the yearly buffers into the canonical BR-101 corridor used for spatial
-  accident inclusion
+- Bronze: [src/etl/bronze/dnit_source2bronze.py](../src/etl/bronze/dnit_source2bronze.py:1)
+- Silver: [src/etl/silver/dnit_bronze2silver.py](../src/etl/silver/dnit_bronze2silver.py:1)
 
-## 3. IBGE Territorial Boundaries
+### Saídas materializadas
 
-### Official sources
+- Bronze: `data/bronze/dnit_road_network`
+- Silver: `data/silver/dnit_br101_corridor`
 
-- Municipal boundaries:
+## 3. IBGE Municípios
+
+### Fonte oficial
+
+- Malha municipal 2024:
   `https://geoftp.ibge.gov.br/organizacao_do_territorio/malhas_territoriais/malhas_municipais/municipio_2024/Brasil/BR_Municipios_2024.zip`
-- Regiões Geográficas Imediatas:
+
+### O que fornece
+
+- polígonos oficiais de municípios
+- hierarquia municipal para RGI
+- atributos administrativos e regionais usados em enriquecimento futuro
+
+### Uso no projeto
+
+Hoje os municípios do IBGE são usados para:
+
+- materializar a malha territorial oficial na bronze
+- padronizar códigos, nomes, CRS, tipo geométrico e área poligonal na silver
+
+Observação importante:
+
+- a silver atual do IBGE para antes de qualquer interseção com DNIT ou PRF
+- portanto, ainda não há recorte oficial “municípios em escopo da BR-101” persistido como parte do pipeline implementado
+
+### Jobs implementados
+
+- Bronze: [src/etl/bronze/ibge_municipios_src2bronze.py](../src/etl/bronze/ibge_municipios_src2bronze.py:1)
+- Silver: [src/etl/silver/ibge_bronze2silver.py](../src/etl/silver/ibge_bronze2silver.py:1)
+
+### Saídas materializadas
+
+- Bronze: `data/bronze/ibge/municipios`
+- Silver: `data/silver/ibge_territorial_preprocessed/municipalities_preprocessed`
+
+## 4. IBGE RGI
+
+### Fonte oficial
+
+- Regiões Geográficas Imediatas 2024:
   `https://geoftp.ibge.gov.br/organizacao_do_territorio/malhas_territoriais/malhas_municipais/municipio_2024/Brasil/BR_RG_Imediatas_2024.zip`
 
-### What they provide
+### O que fornece
 
-- Official municipality polygons
-- Official RGI polygons
-- The municipality-to-RGI hierarchy used for attribution
+- polígonos oficiais de RGI
+- atributos de hierarquia regional do IBGE
 
-### Project role
+### Uso no projeto
 
-These layers are used to:
+Hoje as RGIs do IBGE são usadas para:
 
-- retain only the territorial units crossed by BR-101
-- attribute canonical accidents to municipality and RGI
-- build road-section outputs by municipality and by RGI
+- materializar a malha regional oficial na bronze
+- padronizar códigos, nomes, CRS, tipo geométrico e área poligonal na silver
 
-## 4. Local Bronze-Layer Summary
+Assim como no caso dos municípios, a interseção com o corredor DNIT ainda não faz parte da silver implementada.
 
-The main raw inputs expected in `data/bronze` are:
+### Jobs implementados
 
-- PRF occurrence tables for `2017` through `2026`
-- PRF person tables for `2017` through `2026`
-- DNIT road geometry snapshots `201703A.zip`, `202107A.zip`, and `202601A.zip`
-- IBGE municipality polygons `BR_Municipios_2024.zip`
-- IBGE RGI polygons `BR_RG_Imediatas_2024.zip`
+- Bronze: [src/etl/bronze/ibge_rgi_src2bronze.py](../src/etl/bronze/ibge_rgi_src2bronze.py:1)
+- Silver: [src/etl/silver/ibge_bronze2silver.py](../src/etl/silver/ibge_bronze2silver.py:1)
 
-## 5. Notes
+### Saídas materializadas
 
-- The bronze cache is versioned with DVC. See the DVC workflow notes in
-  [`README.md`](/home/arthur/Documents/projects/radar-prf-101/README.md).
-- The current EDA implementation under `notebooks/eda_runbook_steps_1_6.py`
-  and `notebooks/eda_runbook_step_7.py` is occurrence-table first.
-- Weather and climate data are mentioned in the runbook as future enrichment
-  sources, but they are not yet defined as concrete project inputs.
+- Bronze: `data/bronze/ibge/rgi`
+- Silver: `data/silver/ibge_territorial_preprocessed/rgis_preprocessed`
+
+## 5. Fronteira da camada silver atual
+
+As transformações atualmente implementadas na silver ainda são monofonte:
+
+- PRF transforma apenas dados da PRF
+- DNIT transforma apenas dados do DNIT
+- IBGE transforma apenas dados do IBGE
+
+Ficam para a camada gold:
+
+- classificação PRF x corredor DNIT
+- recorte territorial IBGE x geometria DNIT
+- atribuição de acidentes PRF a município e RGI
+
+## 6. Operação local
+
+As fontes são processadas pelos jobs versionados em [dvc.yaml](../dvc.yaml:1) e executados via [Makefile](../Makefile:1).
+
+Comandos principais:
+
+```bash
+make bronze
+make silver
+make dvc-repro-bronze
+make dvc-repro-silver
+```
+
+## 7. Observações
+
+- Os datasets materializados são versionados com DVC.
+- Os notebooks, especialmente `notebooks/eda-p1.ipynb`, continuam sendo a referência exploratória para as próximas etapas de integração.
+- Fontes adicionais como clima, calendário e feriados ainda não fazem parte do pipeline implementado neste repositório.

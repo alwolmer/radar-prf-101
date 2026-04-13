@@ -1,3 +1,5 @@
 - On hold: feature engineering using INMET historical data to interpolate the climate conditions of a particular municipio/RGI area based on k nearest-neighbours-ish meteorological stations
 - Implement the extraction flow for DNIT and IBGE data as structured, OO, .py-based scripts
 - Implement the transformation flow (canonical accidents set and sectioning into RGI segments) set out in eda notebooks, as structured, OO, .py-based scripts
+
+- Define dvc remote for processed artifacts
