@@ -1,17 +1,12 @@
 from __future__ import annotations
 
 import tempfile
-import time
 from pathlib import Path
 from typing import Any
 
-from pyproj import Transformer
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
-from shapely import to_wkt
-from shapely import wkb as shapely_wkb
-from shapely.ops import transform as shapely_transform
-from shapely.ops import unary_union
+from sedona.spark import SedonaContext
 
 from src.etl.base_job import BaseETLJob, build_spark_session
 from src.etl.datalake import DatalakeAdapter, S3DatalakeAdapter
@@ -72,7 +67,7 @@ class DnitBronze2Silver(BaseETLJob):
             dir="/tmp"
         )
         self._staging_dir = Path(self._temp_dir.name)
-        self._cached_frames: list[DataFrame] = []
+        self.spark = SedonaContext.create(self.spark)
 
     def validate_config(self) -> None:
         super().validate_config()
@@ -85,58 +80,7 @@ class DnitBronze2Silver(BaseETLJob):
             raise ValueError("corridor_buffer_meters must be positive")
 
     def cleanup(self) -> None:
-        for dataframe in self._cached_frames:
-            dataframe.unpersist(blocking=False)
         self._temp_dir.cleanup()
-
-    def _cache_frame(self, name: str, dataframe: DataFrame) -> DataFrame:
-        cached = dataframe.persist()
-        row_count = cached.count()
-        self._cached_frames.append(cached)
-        self.logger.info("Materialized %s with %s row(s)", name, row_count)
-        return cached
-
-    def _build_union_dataframe(
-        self,
-        *,
-        source_dataframe: DataFrame,
-        include_geometry_type: bool,
-        include_buffer: bool,
-        include_area: bool,
-    ) -> DataFrame:
-        rows = source_dataframe.select(
-            F.expr("ST_AsBinary(geometry_proj)").alias("geometry_wkb")
-        ).collect()
-        if not rows:
-            raise ValueError("Cannot build DNIT union artifact without geometries")
-
-        projected_geometries = [
-            shapely_wkb.loads(bytes(row.geometry_wkb))
-            for row in rows
-            if row.geometry_wkb is not None
-        ]
-        if not projected_geometries:
-            raise ValueError("Collected DNIT union geometries were empty")
-
-        union_projected = unary_union(projected_geometries)
-        transformer = Transformer.from_crs(
-            self.projected_crs, self.geodetic_crs, always_xy=True
-        )
-        union_geodetic = shapely_transform(transformer.transform, union_projected)
-
-        record: dict[str, Any] = {
-            "corridor_policy": "union_all_years",
-            "geometry_crs": self.geodetic_crs.upper(),
-            "geometry": to_wkt(union_geodetic),
-        }
-        if include_geometry_type:
-            record["geometry_type"] = union_projected.geom_type
-        if include_buffer:
-            record["buffer_meters"] = int(self.corridor_buffer_meters)
-        if include_area:
-            record["corridor_area_km2"] = float(union_projected.area / 1_000_000.0)
-
-        return self.spark.createDataFrame([record])
 
     def extract(self) -> DataFrame:
         uri = self.datalake.uri_for(self.bronze_subpath).replace("s3://", "s3a://")
@@ -186,7 +130,6 @@ class DnitBronze2Silver(BaseETLJob):
         centerlines_proj = centerlines_proj.filter(
             F.col("geometry_proj").isNotNull()
         ).filter(F.expr("NOT ST_IsEmpty(geometry_proj)"))
-        centerlines_proj = self._cache_frame("centerlines_proj", centerlines_proj)
 
         yearly_centerlines = centerlines_proj.select(
             "snapshot_year",
@@ -211,7 +154,6 @@ class DnitBronze2Silver(BaseETLJob):
                 "geometry_proj"
             ),
         ).filter(F.expr("NOT ST_IsEmpty(geometry_proj)"))
-        corridors_proj = self._cache_frame("corridors_proj", corridors_proj)
 
         yearly_corridors = corridors_proj.select(
             "snapshot_year",
@@ -230,28 +172,43 @@ class DnitBronze2Silver(BaseETLJob):
             ).alias("geometry"),
         )
 
-        union_start = time.perf_counter()
-        centerline_union = self._build_union_dataframe(
-            source_dataframe=centerlines_proj,
-            include_geometry_type=True,
-            include_buffer=False,
-            include_area=False,
-        )
-        self.logger.info(
-            "Built br101_centerline_union on the driver in %.2fs",
-            time.perf_counter() - union_start,
+        road_union_proj = centerlines_proj.agg(
+            F.expr("ST_Union_Aggr(geometry_proj)").alias("geometry_proj")
+        ).filter(F.expr("geometry_proj IS NOT NULL AND NOT ST_IsEmpty(geometry_proj)"))
+
+        centerline_union = road_union_proj.select(
+            F.lit("union_all_years").alias("corridor_policy"),
+            F.regexp_replace(
+                F.expr("ST_GeometryType(geometry_proj)"), r"^ST_", ""
+            ).alias("geometry_type"),
+            F.lit(self.geodetic_crs.upper()).alias("geometry_crs"),
+            F.expr(
+                "ST_AsText("
+                "ST_Transform("
+                f"geometry_proj, '{self.projected_crs}', '{self.geodetic_crs}'"
+                ")"
+                ")"
+            ).alias("geometry"),
         )
 
-        union_start = time.perf_counter()
-        corridor_union = self._build_union_dataframe(
-            source_dataframe=corridors_proj,
-            include_geometry_type=False,
-            include_buffer=True,
-            include_area=True,
-        )
-        self.logger.info(
-            "Built br101_corridor_union on the driver in %.2fs",
-            time.perf_counter() - union_start,
+        corridor_union_proj = corridors_proj.agg(
+            F.expr("ST_Union_Aggr(geometry_proj)").alias("geometry_proj")
+        ).filter(F.expr("geometry_proj IS NOT NULL AND NOT ST_IsEmpty(geometry_proj)"))
+
+        corridor_union = corridor_union_proj.select(
+            F.lit("union_all_years").alias("corridor_policy"),
+            F.lit(int(self.corridor_buffer_meters)).alias("buffer_meters"),
+            (F.expr("ST_Area(geometry_proj)") / F.lit(1_000_000.0)).alias(
+                "corridor_area_km2"
+            ),
+            F.lit(self.geodetic_crs.upper()).alias("geometry_crs"),
+            F.expr(
+                "ST_AsText("
+                "ST_Transform("
+                f"geometry_proj, '{self.projected_crs}', '{self.geodetic_crs}'"
+                ")"
+                ")"
+            ).alias("geometry"),
         )
 
         return {
@@ -269,30 +226,12 @@ class DnitBronze2Silver(BaseETLJob):
             "br101_corridors_by_snapshot",
         }
 
-        artifact_names = list(data)
-        self.logger.info(
-            "DNIT silver artifacts scheduled for write: %s", artifact_names
-        )
-
         for artifact_name, dataframe in data.items():
             artifact_staging_dir = staging_output_dir / artifact_name
-            partition_count = dataframe.rdd.getNumPartitions()
-            self.logger.info(
-                "Writing artifact %s to %s with %s partition(s)",
-                artifact_name,
-                artifact_staging_dir,
-                partition_count,
-            )
-            write_start = time.perf_counter()
             writer = dataframe.write.mode(self.write_mode)
             if artifact_name in yearly_datasets:
                 writer = writer.partitionBy("snapshot_year")
             writer.parquet(str(artifact_staging_dir))
-            self.logger.info(
-                "Finished artifact %s write in %.2fs",
-                artifact_name,
-                time.perf_counter() - write_start,
-            )
 
         destination = self.datalake.persist_directory(
             staging_output_dir, self.silver_subpath

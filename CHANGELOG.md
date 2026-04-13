@@ -5,20 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0]
-
-### Added
-
-- A Docker-first local Spark runtime with a repository `Dockerfile`, a local `docker-compose.yml` service, and `.env.docker` for shared Spark, Sedona, Hadoop AWS, and ETL logging configuration.
-- `scripts/fetch_spark_jars.sh`, which resolves the runtime Spark/Sedona dependency set during image build and bakes the required JARs into the container image instead of relying on per-run package downloads.
-
-### Changed
-
-- The project `Makefile` now assumes a Docker-based workflow: `make` targets execute inside the `spark-env` container, auto-start the service when needed, and use container-local cache directories for `uv` and DVC operations.
-- `src/etl/base_job.py` now builds Spark sessions from environment-driven runtime coordinates, prefers preinstalled JARs when present, applies shared local Spark defaults, configures quieter logging, and records per-phase ETL timings.
-- The DNIT bronze and silver ETL jobs were updated to align with the Docker/Sedona runtime: shapefiles are loaded through Sedona's shapefile reader, PRF and DNIT source jobs emit clearer download/source logging, and the DNIT silver union artifacts are materialized on the driver with Shapely/PyProj plus explicit caching and write-time logging.
-- Python runtime support is now pinned to `>=3.11,<3.13`, with dependency updates that align the local environment to the containerized Spark stack, including `pyspark==3.5.1`, `apache-sedona==1.5.1`, and `pandas>=2.0.0`.
-
 ## [0.3.1]
 
 ### Added

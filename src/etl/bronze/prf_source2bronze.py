@@ -73,9 +73,6 @@ class PrfSrc2Bronze(BaseETLJob):
         return f"{match.group(1)} - Agrupados por ocorrência"
 
     def _download_occurrence_csv(self, *, year: str, source_url: str) -> Path:
-        self.logger.info(
-            "Downloading PRF occurrence archive for %s from %s", year, source_url
-        )
         file_id_match = GOOGLE_DRIVE_FILE_ID_REGEX.search(source_url)
         if file_id_match is None:
             raise ValueError(
@@ -111,7 +108,6 @@ class PrfSrc2Bronze(BaseETLJob):
         return extracted_csv_path
 
     def extract_urls(self) -> list[dict[str, str]]:
-        self.logger.info("Reading PRF source page %s", self.source_page_url)
         raw_tables = pd.read_html(self.source_page_url, extract_links="all")
         urls_by_reference: dict[str, str] = {}
 
