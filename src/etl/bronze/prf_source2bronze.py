@@ -101,9 +101,9 @@ class PrfSrc2Bronze(BaseETLJob):
                     f"No CSV file found inside PRF archive for {year}"
                 )
 
-            safe_filename = f"prf_{year}.csv"
-            extracted_csv_path = self._staging_dir / safe_filename
-
+            extracted_csv_path = (
+                self._staging_dir / f"{year}_Agrupados por ocorrência.csv"
+            )
             with zipped_payload.open(csv_members[0]) as source_file:
                 extracted_csv_path.write_bytes(source_file.read())
 
