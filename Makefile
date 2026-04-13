@@ -5,7 +5,7 @@ UV_ENV = UV_CACHE_DIR=/tmp/uv-cache
 DVC_ENV = DVC_SITE_CACHE_DIR=/tmp/dvc UV_CACHE_DIR=/tmp/uv-cache
 LOCAL_DATALAKE_ENV = DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=/app/data
 
-.PHONY: docker-build docker-up docker-ensure-running install lint linter test pre-commit-install pre-commit-run dvc-status dvc-checkout dvc-repro dvc-repro-bronze dvc-repro-silver bronze silver prf-source2bronze dnit-source2bronze prf-bronze2silver dnit-bronze2silver
+.PHONY: docker-build docker-up docker-ensure-running install lint linter test pre-commit-install pre-commit-run dvc-status dvc-checkout dvc-repro dvc-repro-bronze dvc-repro-silver bronze silver prf-source2bronze dnit-source2bronze ibge-municipios-source2bronze ibge-rgi-source2bronze prf-bronze2silver dnit-bronze2silver ibge-bronze2silver
 
 docker-build:
 	$(DOCKER_COMPOSE) build $(SERVICE)
@@ -51,14 +51,14 @@ dvc-repro: docker-ensure-running
 	$(DOCKER_EXEC) env $(DVC_ENV) python -m dvc repro
 
 dvc-repro-bronze: docker-ensure-running
-	$(DOCKER_EXEC) env $(DVC_ENV) python -m dvc repro prf_source2bronze dnit_source2bronze
+	$(DOCKER_EXEC) env $(DVC_ENV) python -m dvc repro prf_source2bronze dnit_source2bronze ibge_municipios_src2bronze ibge_rgi_src2bronze
 
 dvc-repro-silver: docker-ensure-running
-	$(DOCKER_EXEC) env $(DVC_ENV) python -m dvc repro prf_bronze2silver dnit_bronze2silver
+	$(DOCKER_EXEC) env $(DVC_ENV) python -m dvc repro prf_bronze2silver dnit_bronze2silver ibge_bronze2silver
 
-bronze: prf-source2bronze dnit-source2bronze
+bronze: prf-source2bronze dnit-source2bronze ibge-municipios-source2bronze ibge-rgi-source2bronze
 
-silver: prf-bronze2silver dnit-bronze2silver
+silver: prf-bronze2silver dnit-bronze2silver ibge-bronze2silver
 
 prf-source2bronze: docker-ensure-running
 	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.etl.bronze.prf_source2bronze
@@ -66,8 +66,17 @@ prf-source2bronze: docker-ensure-running
 dnit-source2bronze: docker-ensure-running
 	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.etl.bronze.dnit_source2bronze
 
+ibge-municipios-source2bronze: docker-ensure-running
+	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.etl.bronze.ibge_municipios_src2bronze
+
+ibge-rgi-source2bronze: docker-ensure-running
+	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.etl.bronze.ibge_rgi_src2bronze
+
 prf-bronze2silver: docker-ensure-running
 	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.etl.silver.prf_bronze2silver
 
 dnit-bronze2silver: docker-ensure-running
 	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.etl.silver.dnit_bronze2silver
+
+ibge-bronze2silver: docker-ensure-running
+	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.etl.silver.ibge_bronze2silver
