@@ -245,3 +245,53 @@ stages:
       md5: 38e1ad0f8e28fd606be9ec98830e4d13.dir
       size: 388689539
       nfiles: 56
+  br101_rgi_weekly_panel_silver2gold:
+    cmd: DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=data 
+      UV_CACHE_DIR=/tmp/uv-cache uv run python -m 
+      src.etl.gold.br101_rgi_weekly_panel_silver2gold
+    deps:
+    - path: data/silver/dnit_br101_corridor
+      hash: md5
+      md5: 72db5249fefdb8b49e14ce0ec30f9887.dir
+      size: 67287657
+      nfiles: 14
+    - path: data/silver/ibge_territorial_preprocessed/rgis_preprocessed
+      hash: md5
+      md5: 6b9d376ea4e74b47fb425db8813f79bc.dir
+      size: 101428190
+      nfiles: 28
+    - path: data/silver/prf_accidents_standardized
+      hash: md5
+      md5: c6c514afcaf7e943d22927c98c74c3d6.dir
+      size: 4751396
+      nfiles: 25
+    - path: pyproject.toml
+      hash: md5
+      md5: 8698abdaddfa16017bc9f1043da0ad78
+      size: 1115
+    - path: src/etl/base_job.py
+      hash: md5
+      md5: 233d499ba849554107619a04bb8351d4
+      size: 10574
+    - path: src/etl/datalake.py
+      hash: md5
+      md5: 6da786dd95fde22717e96e53b0d56cde
+      size: 10138
+    - path: src/etl/gold/__init__.py
+      hash: md5
+      md5: 5d0b5308f663ec646d3e3493faa8dc50
+      size: 28
+    - path: src/etl/gold/br101_rgi_weekly_panel_silver2gold.py
+      hash: md5
+      md5: 9de64fbe0af2c9c3f7ae90f61de1ff76
+      size: 43454
+    - path: uv.lock
+      hash: md5
+      md5: 4156b65eca258678cc7bb9837c2de17e
+      size: 417367
+    outs:
+    - path: data/gold/br101_rgi_weekly_panel
+      hash: md5
+      md5: 677eabcc2eece73f00e02dafebd490ce.dir
+      size: 22736086
+      nfiles: 150

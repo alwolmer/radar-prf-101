@@ -5,7 +5,7 @@ Pipeline de engenharia de dados para ingestão, padronização e preparação do
 ## Nome e descrição do projeto
 
 - Nome: `radar-prf-101`
-- Descrição: repositório de ETL e versionamento de dados para construir a base analítica para apresentação histórica e previsão futura da ocorrência de acidentes na BR-101. Hoje o projeto já materializa camadas bronze e silver para PRF e DNIT, além da bronze IBGE e da silver IBGE de pré-processamento territorial sem cruzamento com DNIT ou PRF.
+- Descrição: repositório de ETL e versionamento de dados para construir a base analítica para apresentação histórica e previsão futura da ocorrência de acidentes na BR-101. Hoje o projeto materializa camadas bronze, silver e um primeiro job gold para o painel histórico semanal por RGI e trecho da rodovia.
 
 ## Fonte dos dados
 
@@ -51,10 +51,17 @@ flowchart LR
         IBGES[(data/silver/ibge_territorial_preprocessed)]
     end
 
+    subgraph Gold[Gold]
+        RGIW[(data/gold/br101_rgi_weekly_panel)]
+    end
+
     PRF --> PRFB --> PRFS
     DNIT --> DNITB --> DNITS
     IBGEM --> MUNB --> IBGES
     IBGER --> RGIB --> IBGES
+    PRFS --> RGIW
+    DNITS --> RGIW
+    IBGES --> RGIW
 ```
 
 Artefatos silver implementados:
@@ -64,7 +71,9 @@ Artefatos silver implementados:
 - `ibge_territorial_preprocessed/municipalities_preprocessed`: municípios com padronização geométrica e atributos territoriais.
 - `ibge_territorial_preprocessed/rgis_preprocessed`: RGIs com padronização geométrica e atributos territoriais.
 
-Observação: a silver IBGE para antes do ponto em que IBGE passa a depender de DNIT ou PRF. O cruzamento espacial entre fontes continua fora desta camada.
+Artefato gold implementado:
+
+- `br101_rgi_weekly_panel`: RGIs em escopo, trechos da BR-101 por RGI, acidentes canônicos com atribuição territorial e painéis históricos completos em `trecho x semana` e `RGI x semana`.
 
 ## Executar com Docker
 
@@ -80,9 +89,11 @@ Targets principais:
 ```bash
 make bronze
 make silver
+make gold
 make dvc-repro
 make dvc-repro-bronze
 make dvc-repro-silver
+make dvc-repro-gold
 ```
 
 Targets unitários de bronze:
@@ -100,6 +111,7 @@ Targets unitários de silver:
 make prf-bronze2silver
 make dnit-bronze2silver
 make ibge-bronze2silver
+make br101-rgi-weekly-panel-silver2gold
 ```
 
 ## DVC
@@ -113,6 +125,7 @@ O grafo definido em [dvc.yaml](./dvc.yaml) cobre hoje:
 - `prf_bronze2silver`
 - `dnit_bronze2silver`
 - `ibge_bronze2silver`
+- `br101_rgi_weekly_panel_silver2gold`
 
 Comandos úteis:
 

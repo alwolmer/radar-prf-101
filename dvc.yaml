@@ -76,3 +76,17 @@ stages:
       - data/bronze/ibge/rgi
     outs:
       - data/silver/ibge_territorial_preprocessed
+  br101_rgi_weekly_panel_silver2gold:
+    cmd: DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=data UV_CACHE_DIR=/tmp/uv-cache uv run python -m src.etl.gold.br101_rgi_weekly_panel_silver2gold
+    deps:
+      - pyproject.toml
+      - uv.lock
+      - src/etl/base_job.py
+      - src/etl/datalake.py
+      - src/etl/gold/__init__.py
+      - src/etl/gold/br101_rgi_weekly_panel_silver2gold.py
+      - data/silver/prf_accidents_standardized
+      - data/silver/dnit_br101_corridor
+      - data/silver/ibge_territorial_preprocessed/rgis_preprocessed
+    outs:
+      - data/gold/br101_rgi_weekly_panel
