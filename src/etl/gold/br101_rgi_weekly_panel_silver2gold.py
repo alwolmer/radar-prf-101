@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import tempfile
 from collections import defaultdict
+from collections.abc import Iterable
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from pyproj import Transformer
 from pyspark.sql import DataFrame, SparkSession
@@ -270,7 +271,9 @@ class Br101RgiWeeklyPanelSilver2Gold(BaseETLJob):
         corridor_union_proj: BaseGeometry,
         projected_to_geodetic: Transformer,
         geodetic_to_projected: Transformer,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+    ) -> tuple[
+        list[dict[str, Any]], list[dict[str, Any]], dict[str, list[dict[str, Any]]]
+    ]:
         retained_rgi_records: list[dict[str, Any]] = []
         section_records: list[dict[str, Any]] = []
         sections_by_rgi: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -308,7 +311,9 @@ class Br101RgiWeeklyPanelSilver2Gold(BaseETLJob):
             geometry_proj = shapely_transform(
                 geodetic_to_projected.transform, geometry_geodetic
             )
-            if geometry_proj.is_empty or not geometry_proj.intersects(corridor_union_proj):
+            if geometry_proj.is_empty or not geometry_proj.intersects(
+                corridor_union_proj
+            ):
                 continue
 
             retained_record = {
@@ -365,7 +370,9 @@ class Br101RgiWeeklyPanelSilver2Gold(BaseETLJob):
             sections_by_rgi[retained_record["codigo_rgi"]].append(section_record)
 
         if not retained_rgi_records:
-            raise ValueError("No RGIs intersecting the BR-101 corridor union were found")
+            raise ValueError(
+                "No RGIs intersecting the BR-101 corridor union were found"
+            )
         if not section_records:
             raise ValueError("No BR-101 road sections by RGI could be built")
 
@@ -382,7 +389,14 @@ class Br101RgiWeeklyPanelSilver2Gold(BaseETLJob):
         sections_by_rgi: dict[str, list[dict[str, Any]]],
         corridor_union_proj: BaseGeometry,
         geodetic_to_projected: Transformer,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[tuple[str, date], dict[str, float]], dict[tuple[str, date], dict[str, float]], date, date]:
+    ) -> tuple[
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+        dict[tuple[str, date], dict[str, float]],
+        dict[tuple[str, date], dict[str, float]],
+        date,
+        date,
+    ]:
         corridor_bounds = corridor_union_proj.bounds
         rgis_by_uf: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for record in retained_rgi_records:
@@ -405,12 +419,16 @@ class Br101RgiWeeklyPanelSilver2Gold(BaseETLJob):
             .collect()
         )
         if not week_bounds or week_bounds[0].min_week_start is None:
-            raise ValueError("PRF silver dataset does not contain any valid week_start value")
+            raise ValueError(
+                "PRF silver dataset does not contain any valid week_start value"
+            )
 
         start_week = _normalize_date(week_bounds[0].min_week_start)
         end_week = _normalize_date(week_bounds[0].max_week_start)
         if start_week is None or end_week is None:
-            raise ValueError("Unable to determine panel temporal coverage from PRF silver")
+            raise ValueError(
+                "Unable to determine panel temporal coverage from PRF silver"
+            )
 
         accident_columns = [
             "id",
@@ -482,7 +500,9 @@ class Br101RgiWeeklyPanelSilver2Gold(BaseETLJob):
             latitude = _normalize_float(getattr(row, "latitude", None))
             longitude = _normalize_float(getattr(row, "longitude", None))
             has_valid_coords = bool(getattr(row, "has_valid_coords", False))
-            has_valid_coords = has_valid_coords and latitude is not None and longitude is not None
+            has_valid_coords = (
+                has_valid_coords and latitude is not None and longitude is not None
+            )
             is_br101_declared = bool(getattr(row, "is_br101_declared", False))
 
             point_proj: Point | None = None
@@ -496,7 +516,9 @@ class Br101RgiWeeklyPanelSilver2Gold(BaseETLJob):
                     minx <= point_proj.x <= maxx and miny <= point_proj.y <= maxy
                 )
                 if inside_bbox:
-                    inside_canonical_corridor = corridor_union_proj.intersects(point_proj)
+                    inside_canonical_corridor = corridor_union_proj.intersects(
+                        point_proj
+                    )
 
             accident_class = _assign_accident_class(
                 has_valid_coords=has_valid_coords,
