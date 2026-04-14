@@ -52,6 +52,18 @@ FORECAST_COLUMNS = [
     "metadata",
 ]
 
+SEQUENCE_META_COLUMNS = [
+    "group_name",
+    "rgi_id",
+    "rgi_name",
+    "uf",
+    "forecast_batch_start",
+    "cutoff_week_start",
+    "target_week_starts",
+    "target_week_ends",
+    "target_year_weeks",
+]
+
 
 @dataclass(frozen=True)
 class Notebook4Config:
@@ -547,7 +559,7 @@ def build_local_sequence_dataset(
                 (0, config.forecast_horizon_weeks), dtype=np.float32
             ),
             "target_scale": np.empty((0, 1), dtype=np.float32),
-            "meta": pd.DataFrame(meta_rows),
+            "meta": pd.DataFrame(meta_rows, columns=SEQUENCE_META_COLUMNS),
         }
 
     return {
@@ -564,6 +576,80 @@ def build_local_sequence_dataset(
         "actual_targets": np.stack(actual_target_rows).astype(np.float32),
         "target_scale": np.asarray(target_scale_rows, dtype=np.float32),
         "meta": pd.DataFrame(meta_rows),
+    }
+
+
+def _empty_group_sequence_dataset(
+    config: Notebook4Config,
+    *,
+    split: str,
+    group_name: str,
+) -> dict[str, Any]:
+    return {
+        "split": split,
+        "group_name": group_name,
+        "inputs": {
+            "history": np.empty((0, config.lookback_weeks, 1), dtype=np.float32),
+            "future_holiday": np.empty(
+                (0, config.forecast_horizon_weeks, len(HOLIDAY_FEATURE_COLUMNS)),
+                dtype=np.float32,
+            ),
+            "road_length": np.empty((0, 1), dtype=np.float32),
+            "scale_feature": np.empty((0, 1), dtype=np.float32),
+        },
+        "targets": np.empty((0, config.forecast_horizon_weeks), dtype=np.float32),
+        "actual_targets": np.empty(
+            (0, config.forecast_horizon_weeks), dtype=np.float32
+        ),
+        "target_scale": np.empty((0, 1), dtype=np.float32),
+        "meta": pd.DataFrame(columns=SEQUENCE_META_COLUMNS),
+    }
+
+
+def combine_sequence_bundles(
+    bundles: list[dict[str, Any]],
+    config: Notebook4Config,
+    *,
+    split: str,
+    group_name: str,
+) -> dict[str, Any]:
+    non_empty = [bundle for bundle in bundles if len(bundle["meta"]) > 0]
+    if not non_empty:
+        return _empty_group_sequence_dataset(
+            config,
+            split=split,
+            group_name=group_name,
+        )
+
+    return {
+        "split": split,
+        "group_name": group_name,
+        "inputs": {
+            "history": np.concatenate(
+                [bundle["inputs"]["history"] for bundle in non_empty], axis=0
+            ).astype(np.float32),
+            "future_holiday": np.concatenate(
+                [bundle["inputs"]["future_holiday"] for bundle in non_empty], axis=0
+            ).astype(np.float32),
+            "road_length": np.concatenate(
+                [bundle["inputs"]["road_length"] for bundle in non_empty], axis=0
+            ).astype(np.float32),
+            "scale_feature": np.concatenate(
+                [bundle["inputs"]["scale_feature"] for bundle in non_empty], axis=0
+            ).astype(np.float32),
+        },
+        "targets": np.concatenate(
+            [bundle["targets"] for bundle in non_empty], axis=0
+        ).astype(np.float32),
+        "actual_targets": np.concatenate(
+            [bundle["actual_targets"] for bundle in non_empty], axis=0
+        ).astype(np.float32),
+        "target_scale": np.concatenate(
+            [bundle["target_scale"] for bundle in non_empty], axis=0
+        ).astype(np.float32),
+        "meta": pd.concat(
+            [bundle["meta"] for bundle in non_empty], ignore_index=True
+        ).reset_index(drop=True),
     }
 
 
@@ -608,6 +694,51 @@ def prepare_local_rnn_datasets(
     return datasets
 
 
+def prepare_group_rnn_datasets(
+    local_datasets: dict[str, dict[str, Any]],
+    config: Notebook4Config,
+) -> dict[str, dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {name: [] for name in GROUP_ORDER}
+    for dataset in local_datasets.values():
+        group_name = str(dataset["meta"]["group_name"])
+        grouped.setdefault(group_name, []).append(dataset)
+
+    group_datasets: dict[str, dict[str, Any]] = {}
+    for group_name in GROUP_ORDER:
+        datasets_in_group = grouped.get(group_name, [])
+        if not datasets_in_group:
+            continue
+
+        group_datasets[group_name] = {
+            "meta": {
+                "group_name": group_name,
+                "n_rgis": int(len(datasets_in_group)),
+                "rgi_ids": sorted(
+                    str(dataset["meta"]["rgi_id"]) for dataset in datasets_in_group
+                ),
+            },
+            "train": combine_sequence_bundles(
+                [dataset["train"] for dataset in datasets_in_group],
+                config,
+                split="train",
+                group_name=group_name,
+            ),
+            "validation": combine_sequence_bundles(
+                [dataset["validation"] for dataset in datasets_in_group],
+                config,
+                split="validation",
+                group_name=group_name,
+            ),
+            "test": combine_sequence_bundles(
+                [dataset["test"] for dataset in datasets_in_group],
+                config,
+                split="test",
+                group_name=group_name,
+            ),
+        }
+    return group_datasets
+
+
 def build_sequence_manifest(local_datasets: dict[str, dict[str, Any]]) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for rgi_id, dataset in local_datasets.items():
@@ -634,6 +765,32 @@ def build_sequence_manifest(local_datasets: dict[str, dict[str, Any]]) -> pd.Dat
         pd.DataFrame(rows)
         .sort_values(["group_name", "rgi_id", "split"])
         .reset_index(drop=True)
+    )
+
+
+def build_group_sequence_manifest(
+    group_datasets: dict[str, dict[str, Any]],
+) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for group_name, dataset in group_datasets.items():
+        for split in ["train", "validation", "test"]:
+            bundle = dataset[split]
+            rows.append(
+                {
+                    "group_name": group_name,
+                    "split": split,
+                    "n_rgis": int(dataset["meta"]["n_rgis"]),
+                    "n_samples": int(len(bundle["meta"])),
+                    "min_week_start": bundle["meta"]["forecast_batch_start"].min()
+                    if not bundle["meta"].empty
+                    else pd.NaT,
+                    "max_week_start": bundle["meta"]["forecast_batch_start"].max()
+                    if not bundle["meta"].empty
+                    else pd.NaT,
+                }
+            )
+    return (
+        pd.DataFrame(rows).sort_values(["group_name", "split"]).reset_index(drop=True)
     )
 
 
@@ -680,7 +837,7 @@ def build_rnn_model(
             "scale_feature": scale_feature_input,
         },
         outputs=output,
-        name=f"notebook4_local_{architecture}",
+        name=f"notebook4_activity_group_{architecture}",
     )
     model.compile(
         optimizer=keras.optimizers.Adam(),
@@ -690,7 +847,7 @@ def build_rnn_model(
     return model
 
 
-def train_local_model(
+def train_group_model(
     train_bundle: dict[str, Any],
     validation_bundle: dict[str, Any],
     config: Notebook4Config,
@@ -701,11 +858,12 @@ def train_local_model(
     require_tensorflow()
     if train_bundle["targets"].size == 0:
         raise ValueError(
-            f"No train samples were found for rgi_id={train_bundle['rgi_id']!r}."
+            f"No train samples were found for group_name={train_bundle['group_name']!r}."
         )
     if validation_bundle["targets"].size == 0:
         raise ValueError(
-            f"No validation samples were found for rgi_id={validation_bundle['rgi_id']!r}."
+            "No validation samples were found for "
+            f"group_name={validation_bundle['group_name']!r}."
         )
 
     tf.keras.utils.set_random_seed(config.random_seed)
@@ -722,7 +880,7 @@ def train_local_model(
         callbacks.append(
             TqdmCallback(
                 verbose=0,
-                desc=f"{train_bundle['rgi_id']} {architecture.upper()} training",
+                desc=(f"{train_bundle['group_name']} {architecture.upper()} training"),
                 leave=True,
             )
         )
@@ -753,7 +911,6 @@ def train_local_model(
         else float("nan")
     )
     return {
-        "rgi_id": train_bundle["rgi_id"],
         "group_name": train_bundle["group_name"],
         "architecture": architecture,
         "model": model,
@@ -763,6 +920,8 @@ def train_local_model(
         "runtime_seconds": runtime_seconds,
         "n_train_samples": int(len(train_bundle["meta"])),
         "n_validation_samples": int(len(validation_bundle["meta"])),
+        "n_train_rgis": int(train_bundle["meta"]["rgi_id"].nunique()),
+        "n_validation_rgis": int(validation_bundle["meta"]["rgi_id"].nunique()),
     }
 
 
@@ -800,7 +959,7 @@ def bundle_predictions_to_forecast_frame(
         ):
             rows.append(
                 {
-                    "model": f"local_{architecture}",
+                    "model": f"activity_group_{architecture}",
                     "architecture": architecture,
                     "group_name": meta["group_name"],
                     "split": bundle["split"],
@@ -1065,7 +1224,6 @@ def flatten_training_histories(training_runs: list[dict[str, Any]]) -> pd.DataFr
         epochs = max((len(values) for values in history.values()), default=0)
         for epoch_idx in range(epochs):
             row = {
-                "rgi_id": run["rgi_id"],
                 "group_name": run["group_name"],
                 "architecture": run["architecture"],
                 "epoch": epoch_idx + 1,
@@ -1077,7 +1235,7 @@ def flatten_training_histories(training_runs: list[dict[str, Any]]) -> pd.DataFr
             rows.append(row)
     return (
         pd.DataFrame(rows)
-        .sort_values(["group_name", "rgi_id", "architecture", "epoch"])
+        .sort_values(["group_name", "architecture", "epoch"])
         .reset_index(drop=True)
     )
 
@@ -1085,7 +1243,6 @@ def flatten_training_histories(training_runs: list[dict[str, Any]]) -> pd.DataFr
 def build_model_run_summary(training_runs: list[dict[str, Any]]) -> pd.DataFrame:
     rows = [
         {
-            "rgi_id": run["rgi_id"],
             "group_name": run["group_name"],
             "architecture": run["architecture"],
             "best_epoch": run["best_epoch"],
@@ -1093,14 +1250,53 @@ def build_model_run_summary(training_runs: list[dict[str, Any]]) -> pd.DataFrame
             "runtime_seconds": run["runtime_seconds"],
             "n_train_samples": run["n_train_samples"],
             "n_validation_samples": run["n_validation_samples"],
+            "n_train_rgis": run["n_train_rgis"],
+            "n_validation_rgis": run["n_validation_rgis"],
         }
         for run in training_runs
     ]
     return (
         pd.DataFrame(rows)
-        .sort_values(["group_name", "rgi_id", "architecture"])
+        .sort_values(["group_name", "architecture"])
         .reset_index(drop=True)
     )
+
+
+def build_rgi_metric_report(rgi_level_metrics: pd.DataFrame) -> pd.DataFrame:
+    if rgi_level_metrics.empty:
+        return pd.DataFrame(
+            columns=[
+                "split",
+                "group_name",
+                "model",
+                "architecture",
+                "rgi_id",
+                "rgi_name",
+                "uf",
+                "rmse",
+                "r2",
+                "n_predictions",
+                "forecast_row_coverage",
+            ]
+        )
+
+    columns = [
+        "split",
+        "group_name",
+        "model",
+        "architecture",
+        "rgi_id",
+        "rgi_name",
+        "uf",
+        "rmse",
+        "r2",
+        "n_predictions",
+        "forecast_row_coverage",
+    ]
+    report = rgi_level_metrics.loc[:, columns].copy()
+    return report.sort_values(
+        ["split", "group_name", "architecture", "rgi_id"]
+    ).reset_index(drop=True)
 
 
 def summarize_horizon_rmse(
@@ -1197,7 +1393,8 @@ def plot_test_predictions_for_rgi(
         )
 
     plt.title(
-        f"{split.title()} actual vs local-model predictions for {rgi_name} ({uf}) [{rgi_id}]"
+        f"{split.title()} actual vs activity-group-model predictions for "
+        f"{rgi_name} ({uf}) [{rgi_id}]"
     )
     plt.xlabel("Week start")
     plt.ylabel("Accident count")
