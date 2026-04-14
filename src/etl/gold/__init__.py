@@ -1,2 +1,1 @@
 """Gold-layer ETL jobs."""
-
