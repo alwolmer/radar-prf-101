@@ -1,11 +1,13 @@
 DOCKER_COMPOSE ?= docker compose
 SERVICE ?= spark-env
+MLFLOW_SERVICE ?= mlflow
 DOCKER_EXEC = $(DOCKER_COMPOSE) exec -T $(SERVICE)
 UV_ENV = UV_CACHE_DIR=/tmp/uv-cache
 DVC_ENV = DVC_SITE_CACHE_DIR=/tmp/dvc UV_CACHE_DIR=/tmp/uv-cache
 LOCAL_DATALAKE_ENV = DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=/app/data
+ML_ENV = DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=/app/data MLFLOW_TRACKING_URI=http://mlflow:5000
 
-.PHONY: docker-build docker-up docker-ensure-running install lint linter test pre-commit-install pre-commit-run dvc-status dvc-checkout dvc-repro dvc-repro-bronze dvc-repro-silver dvc-repro-gold bronze silver gold prf-source2bronze dnit-source2bronze ibge-municipios-source2bronze ibge-rgi-source2bronze prf-bronze2silver dnit-bronze2silver ibge-bronze2silver br101-rgi-weekly-panel-silver2gold
+.PHONY: docker-build docker-up docker-ensure-running mlflow-ensure-running install lint linter test pre-commit-install pre-commit-run dvc-status dvc-checkout dvc-repro dvc-repro-bronze dvc-repro-silver dvc-repro-gold bronze silver gold prf-source2bronze dnit-source2bronze ibge-municipios-source2bronze ibge-rgi-source2bronze prf-bronze2silver dnit-bronze2silver ibge-bronze2silver br101-rgi-weekly-panel-silver2gold mlflow-build mlflow-up activity-group-featurize activity-group-train
 
 docker-build:
 	$(DOCKER_COMPOSE) build $(SERVICE)
@@ -13,12 +15,26 @@ docker-build:
 docker-up:
 	$(DOCKER_COMPOSE) up -d $(SERVICE)
 
+mlflow-build:
+	$(DOCKER_COMPOSE) build mlflow
+
+mlflow-up:
+	$(DOCKER_COMPOSE) up -d mlflow
+
 docker-ensure-running:
 	@running_container="$$( $(DOCKER_COMPOSE) ps --status running -q $(SERVICE) )"; \
 	if [ -n "$$running_container" ]; then \
 		echo "$(SERVICE) is already running"; \
 	else \
 		$(DOCKER_COMPOSE) up -d $(SERVICE); \
+	fi
+
+mlflow-ensure-running:
+	@running_container="$$( $(DOCKER_COMPOSE) ps --status running -q $(MLFLOW_SERVICE) )"; \
+	if [ -n "$$running_container" ]; then \
+		echo "$(MLFLOW_SERVICE) is already running"; \
+	else \
+		$(DOCKER_COMPOSE) up -d $(MLFLOW_SERVICE); \
 	fi
 
 install: docker-up
@@ -88,3 +104,9 @@ ibge-bronze2silver: docker-ensure-running
 
 br101-rgi-weekly-panel-silver2gold: docker-ensure-running
 	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.etl.gold.br101_rgi_weekly_panel_silver2gold
+
+activity-group-featurize: docker-ensure-running
+	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.ml.activity_group_regression featurize
+
+activity-group-train: docker-ensure-running mlflow-ensure-running
+	$(DOCKER_EXEC) env $(ML_ENV) python -m src.ml.activity_group_regression train

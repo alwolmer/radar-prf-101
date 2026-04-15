@@ -16,7 +16,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never \
     PATH="/opt/venv/bin:$PATH"
 
-# Install only the runtime packages needed inside the container.
+# Shared runtime image for ETL jobs and local ML orchestration commands.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         default-jre-headless \
@@ -27,7 +27,7 @@ RUN apt-get update \
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 COPY --from=spark-jars /opt/spark-jars /opt/spark-jars
 
-# Keep the virtual environment outside /app so the bind mount does not hide it.
+# Keep the environment outside /app so the bind mount does not shadow it.
 WORKDIR /tmp/build
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --all-groups --no-install-project \

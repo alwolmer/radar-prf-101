@@ -837,7 +837,7 @@ def build_rnn_model(
             "scale_feature": scale_feature_input,
         },
         outputs=output,
-        name=f"notebook4_activity_group_{architecture}",
+        name=f"activity_group_{architecture}",
     )
     model.compile(
         optimizer=keras.optimizers.Adam(),

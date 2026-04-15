@@ -1,0 +1,30 @@
+# MLflow server URI. The compose stack exposes it on localhost:5000.
+# Env override: MLFLOW_TRACKING_URI
+tracking_uri: http://mlflow:5000
+
+# Experiment namespace visible in the MLflow UI.
+# Env override: MLFLOW_EXPERIMENT_NAME
+experiment_name: radar-prf-101-activity-group-rnn
+
+# Where trained-model artefacts and evaluation reports are persisted.
+# Env override: ML_ACTIVITY_GROUP_EXPERIMENT_OUTPUT_SUBPATH
+output_subpath: gold/ml/activity_group_regression
+
+# Whether Keras training should render progress bars when running interactively.
+# Env override: ML_ACTIVITY_GROUP_SHOW_PROGRESS
+show_progress: true
+
+# Directory containing one YAML per enabled model architecture.
+model_config_dir: config/ml/activity_group/models
+
+# The experiment trains one model per `(activity_group, architecture)` pair.
+# Env override: ML_ACTIVITY_GROUP_ARCHITECTURES
+architectures:
+  - gru
+  - lstm
+
+# During regression, the experiment also materializes:
+# - feature_store/<architecture>/feature_matrix.parquet
+# - feature_store/<architecture>/feature_registry.parquet
+# - feature_store/<architecture>/feature_profile.parquet
+# so the full set of considered features can be inspected per architecture.
