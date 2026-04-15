@@ -6,7 +6,7 @@ DVC_ENV = DVC_SITE_CACHE_DIR=/tmp/dvc UV_CACHE_DIR=/tmp/uv-cache
 LOCAL_DATALAKE_ENV = DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=/app/data
 ML_ENV = DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=/app/data MLFLOW_TRACKING_URI=http://mlflow:5000
 
-.PHONY: docker-build docker-pull docker-publish docker-up docker-ensure-running mlflow-build mlflow-pull mlflow-publish mlflow-up mlflow-ensure-running install lint linter test pre-commit-install pre-commit-run dvc-status dvc-checkout dvc-repro dvc-repro-bronze dvc-repro-silver dvc-repro-gold bronze silver gold prf-source2bronze dnit-source2bronze ibge-municipios-source2bronze ibge-rgi-source2bronze prf-bronze2silver dnit-bronze2silver ibge-bronze2silver br101-rgi-weekly-panel-silver2gold activity-group-featurize activity-group-train
+.PHONY: docker-build docker-pull docker-publish docker-up docker-ensure-running mlflow-build mlflow-pull mlflow-publish mlflow-up mlflow-ensure-running install lint linter test pre-commit-install pre-commit-install-local pre-commit-run dvc-status dvc-checkout dvc-repro dvc-repro-bronze dvc-repro-silver dvc-repro-gold bronze silver gold prf-source2bronze dnit-source2bronze ibge-municipios-source2bronze ibge-rgi-source2bronze prf-bronze2silver dnit-bronze2silver ibge-bronze2silver br101-rgi-weekly-panel-silver2gold activity-group-featurize activity-group-train
 
 docker-build:
 	$(DOCKER_COMPOSE) build $(SERVICE)
@@ -61,8 +61,11 @@ linter: docker-ensure-running
 test: docker-ensure-running
 	$(DOCKER_EXEC) pytest tests/ -v
 
-pre-commit-install: docker-ensure-running
+pre-commit-install-container: docker-ensure-running
 	$(DOCKER_EXEC) pre-commit install
+
+pre-commit-install-local:
+	uv run pre-commit install
 
 pre-commit-run: docker-ensure-running
 	$(DOCKER_EXEC) pre-commit run --all-files

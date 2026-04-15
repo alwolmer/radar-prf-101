@@ -35,4 +35,6 @@ RUN uv sync --frozen --all-groups --no-install-project \
 
 WORKDIR /app
 
+RUN git config --global --add safe.directory /app
+
 CMD ["tail", "-f", "/dev/null"]

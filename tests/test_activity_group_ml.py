@@ -315,7 +315,9 @@ def test_activity_group_experiment_persists_group_comparison_manifest(
             {"split": "test", "rmse": 1.4, "r2": 0.6, "n_predictions": 4},
         ]
     )
-    comparison_dataset_key = "low_activity|history=2|horizon=1|latency=1|lags=1-2|rgis=3"
+    comparison_dataset_key = (
+        "low_activity|history=2|horizon=1|latency=1|lags=1-2|rgis=3"
+    )
     output_dir = experiment._finalize_experiment_output(
         feature_data={
             "output_uri": str(data_root / "gold" / "ml" / "activity_group_features"),
