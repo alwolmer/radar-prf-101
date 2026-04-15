@@ -2,6 +2,7 @@ services:
   spark-env:
     build:
       context: .
+      dockerfile: docker/etl/Dockerfile
     image: alwolmer/radar-prf-101:latest
     container_name: radar_prf_101_spark
     command: ["tail", "-f", "/dev/null"]
@@ -10,14 +11,31 @@ services:
     volumes:
       - .:/app
       - uv-cache:/tmp/uv-cache
+      - mlflow-data:/mlflow
     environment:
       SPARK_MODE: local
       DATALAKE_BACKEND: local
       DATALAKE_LOCAL_ROOT: /app/data
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_EXPERIMENT_NAME: radar-prf-101-activity-group-rnn
       PYSPARK_PYTHON: python3
     working_dir: /app
     tty: true
     stdin_open: true
+    depends_on:
+      - mlflow
+
+  mlflow:
+    build:
+      context: .
+      dockerfile: docker/mlflow/Dockerfile
+    image: alwolmer/radar-prf-101-mlflow:latest
+    container_name: radar_prf_101_mlflow
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow-data:/mlflow
 
 volumes:
   uv-cache:
+  mlflow-data:

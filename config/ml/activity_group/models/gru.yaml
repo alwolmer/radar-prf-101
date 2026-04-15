@@ -1,0 +1,22 @@
+# GRU variant for the activity-group experiment.
+architecture: gru
+
+# Recurrent encoder size used to summarize the historical accident sequence.
+recurrent_units: 32
+
+# Dense head that combines encoded history with holiday + static features.
+dense_units_first: 64
+dense_units_second: 32
+
+# Training loop controls.
+random_seed: 101
+max_epochs: 50
+batch_size: 32
+early_stopping_patience: 5
+
+# How the model should represent the RGI identity feature.
+# Supported values: `one_hot`, `embedding`
+rgi_representation_mode: embedding
+
+# Only used when `rgi_representation_mode: embedding`.
+rgi_embedding_dim: 8

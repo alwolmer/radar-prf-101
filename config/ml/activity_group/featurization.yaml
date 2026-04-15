@@ -1,0 +1,66 @@
+# Source artefacts produced by the BR-101 gold ETL job.
+# Env override: ML_ACTIVITY_GROUP_FEATURE_INPUT_SUBPATH
+gold_input_subpath: gold/br101_rgi_weekly_panel
+
+# Where the featurization run persists parquet outputs and sequence bundles.
+# This stays in the gold layer by design: featurization reads gold and writes gold.
+# Env override: ML_ACTIVITY_GROUP_FEATURE_OUTPUT_SUBPATH
+output_subpath: gold/ml/activity_group_features
+
+# Weight assigned to bridge days when building holiday / non-work features.
+# Env override: ML_ACTIVITY_GROUP_BRIDGE_WEIGHT
+bridge_weight: 0.5
+
+# Recent window passed to the recurrent encoder.
+recent_history_weeks: 12
+
+# Seasonal context aligned to each forecasted step.
+# Each value is a lag, in weeks, pulled from the full history.
+seasonal_lag_weeks:
+  - 52
+  - 104
+  - 156
+
+# Cap used when materializing the experiment feature-store view.
+feature_store_max_rows: 20000
+
+# Config-driven exclusions applied directly on the canonical gold accident set.
+# A rule excludes rows when all of its conditions match.
+# The default behaviour for this repo is to exclude SP and RS rows.
+dynamic_exclusion_rules:
+  - name: exclude_sp_and_rs
+    conditions:
+      - column: uf
+        values:
+          - SP
+          - RS
+
+# Shared sequence defaults inherited by every activity-group model unless a
+# per-architecture YAML overrides a training-related field.
+#
+# These values encode the main modelling assumptions:
+# - the supervised dataset is a dense weekly `RGI x week` panel
+# - train / validation / test windows are time-based and non-overlapping
+# - forecasts use a shorter near-term horizon plus separate seasonal lag features
+# - forecasts start after a reporting-latency gap
+# - activity groups are derived from train-window accident intensity only
+sequence_defaults:
+  train_start_year: 2017
+  train_start_week: 1
+  train_end_year: 2023
+  train_end_week: 52
+  validation_start_year: 2024
+  validation_start_week: 1
+  validation_end_year: 2024
+  validation_end_week: 52
+  test_start_year: 2025
+  test_start_week: 1
+  test_end_year: 2025
+  test_end_week: 52
+  lookback_weeks: 12
+  latency_gap_weeks: 4
+  forecast_horizon_weeks: 4
+  rnn_train_stride_weeks: 1
+  rnn_eval_stride_weeks: 4
+  low_activity_share: 0.2
+  high_activity_share: 0.2

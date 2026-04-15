@@ -23,6 +23,7 @@ Mais detalhes estão em [documentation/data-sources.md](./documentation/data-sou
 - Parquet como formato de persistência analítica.
 - DVC para versionamento de datasets e reprodução do pipeline.
 - Docker Compose para o runtime local padronizado.
+- MLflow para tracking de experimentos de modelagem.
 - `make` para orquestrar tarefas recorrentes.
 - `uv` para dependências Python.
 - Notebooks para EDA e especificação inicial das regras.
@@ -81,6 +82,8 @@ O runtime suportado localmente é o serviço `spark-env` definido em `docker-com
 
 ```bash
 make docker-build
+make mlflow-build
+make mlflow-up
 make install
 ```
 
@@ -111,8 +114,48 @@ Targets unitários de silver:
 make prf-bronze2silver
 make dnit-bronze2silver
 make ibge-bronze2silver
-make br101-rgi-weekly-panel-silver2gold
 ```
+
+Targets unitários para gold em diante:
+
+```
+make br101-rgi-weekly-panel-silver2gold
+make activity-group-featurize
+make activity-group-train
+```
+
+## Camada de ML
+
+O repositório inclui `src/ml/` com contratos dedicados para modelagem:
+
+- `BaseMLflowRegressionExperiment`: ciclo `extract -> featurize -> train -> evaluate -> persist`, com tracking em MLflow.
+- `BaseFeaturizationRun`: base para jobs de feature engineering com a mesma ergonomia do `BaseETLJob`.
+- `BaseModelServingEndpoint`: contrato abstrato para deployment e serving do modelo.
+
+Implementações concretas adicionadas:
+
+- `ActivityGroupFeaturizationRun`: lê exclusivamente artefatos gold de `br101_rgi_weekly_panel`, recompõe o painel semanal `RGI x week`, aplica exclusões dinâmicas configuráveis e serializa bundles de sequência também na camada gold.
+- `ActivityGroupRegressionExperiment`: treina as variantes GRU/LSTM por activity group usando histórico recente curto, lags sazonais e identidade do RGI como feature; registra parâmetros e métricas no MLflow e persiste modelos, forecasts e relatórios.
+
+Configs de hiperparâmetros e execução:
+
+- `config/ml/activity_group/featurization.yaml`: recortes temporais, assumptions e wiring da featurização gold-only, incluindo exclusões dinâmicas e janela recente/sazonal.
+- `config/ml/activity_group/experiment.yaml`: tracking URI, experimento MLflow, arquiteturas habilitadas e resolução dos arquivos de modelo.
+- `config/ml/activity_group/models/gru.yaml`
+- `config/ml/activity_group/models/lstm.yaml`
+
+Cada arquivo em `config/ml/activity_group/models/` define os hiperparâmetros do respectivo modelo, inclusive a representação do RGI (`embedding` ou `one_hot`).
+
+Entrypoints:
+
+```bash
+python -m src.ml.activity_group_regression featurize
+python -m src.ml.activity_group_regression train
+```
+
+O serviço `mlflow` sobe em `http://localhost:5000` via Docker Compose.
+
+Os artefatos de treino incluem ainda uma visão tipo feature store em `feature_store/<architecture>/`, com matriz de features, registry e perfil estatístico para inspeção do conjunto efetivamente usado em cada experimento.
 
 ## DVC
 
