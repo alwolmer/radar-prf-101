@@ -107,7 +107,9 @@ def _print_training_summary(result: Mapping[str, Any]) -> None:
     runs_root = persisted_output / "runs"
     if runs_root.exists():
         print(f"Variant artifacts: {runs_root}")
-        print(f"Feature store: {runs_root}/<activity_group>/<architecture>/feature_store")
+        print(
+            f"Feature store: {runs_root}/<activity_group>/<architecture>/feature_store"
+        )
 
     tracking_uri = str(result.get("tracking_uri", ""))
     browser_tracking_uri = _resolve_browser_tracking_uri(tracking_uri)
@@ -1707,12 +1709,12 @@ def _write_architecture_comparison_plot(
     rmse_colors = [
         split_colors.get(str(split), "#1d6fd6") for split in plot_frame["split"]
     ]
-    r2_colors = [split_colors.get(str(split), "#2a9d8f") for split in plot_frame["split"]]
+    r2_colors = [
+        split_colors.get(str(split), "#2a9d8f") for split in plot_frame["split"]
+    ]
 
     test_rows = plot_frame.loc[plot_frame["split"].eq("test")].copy()
-    best_test_rmse = (
-        float(test_rows["rmse"].min()) if not test_rows.empty else None
-    )
+    best_test_rmse = float(test_rows["rmse"].min()) if not test_rows.empty else None
     best_test_r2 = float(test_rows["r2"].max()) if not test_rows.empty else None
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
@@ -1737,8 +1739,10 @@ def _write_architecture_comparison_plot(
             va="bottom",
             fontsize=8,
         )
-        if row.split == "test" and best_test_rmse is not None and np.isclose(
-            rmse_value, best_test_rmse
+        if (
+            row.split == "test"
+            and best_test_rmse is not None
+            and np.isclose(rmse_value, best_test_rmse)
         ):
             rmse_bar.set_edgecolor("#111111")
             rmse_bar.set_linewidth(2.5)
@@ -1766,8 +1770,10 @@ def _write_architecture_comparison_plot(
             va=r2_va,
             fontsize=8,
         )
-        if row.split == "test" and best_test_r2 is not None and np.isclose(
-            r2_value, best_test_r2
+        if (
+            row.split == "test"
+            and best_test_r2 is not None
+            and np.isclose(r2_value, best_test_r2)
         ):
             r2_bar.set_edgecolor("#111111")
             r2_bar.set_linewidth(2.5)
@@ -1828,9 +1834,9 @@ def _build_test_window_comparison_frame(
             ]
         )
 
-    first_test_weeks = (
-        sorted(pd.to_datetime(test_forecasts["week_start"]).dropna().unique())[:n_weeks]
-    )
+    first_test_weeks = sorted(
+        pd.to_datetime(test_forecasts["week_start"]).dropna().unique()
+    )[:n_weeks]
     if not first_test_weeks:
         return pd.DataFrame(
             columns=[
@@ -1893,7 +1899,9 @@ def _write_test_window_rgi_comparison_plot(
     if not isinstance(axes, np.ndarray):
         axes = np.array([axes])
 
-    ordered_weeks = sorted(pd.to_datetime(comparison_frame["week_start"]).dropna().unique())
+    ordered_weeks = sorted(
+        pd.to_datetime(comparison_frame["week_start"]).dropna().unique()
+    )
     week_labels = [pd.Timestamp(week).strftime("%Y-%m-%d") for week in ordered_weeks]
 
     for axis, rgi_row in zip(axes, rgi_index.itertuples(index=False), strict=True):
@@ -1930,7 +1938,9 @@ def _write_test_window_rgi_comparison_plot(
                 alpha=0.95,
                 label=architecture,
             )
-        axis.set_title(f"{rgi_row.uf} / {rgi_row.rgi_id} / {rgi_row.rgi_name}", loc="left")
+        axis.set_title(
+            f"{rgi_row.uf} / {rgi_row.rgi_id} / {rgi_row.rgi_name}", loc="left"
+        )
         axis.set_ylabel("Accidents")
         axis.grid(axis="y", alpha=0.25)
 
@@ -2311,7 +2321,7 @@ class ActivityGroupRegressionExperiment(BaseMLflowRegressionExperiment):
             (config_dir / f"{architecture}.yaml").write_text(
                 model_config.config_path.read_text(encoding="utf-8"),
                 encoding="utf-8",
-        )
+            )
 
         return output_dir
 
@@ -2444,7 +2454,9 @@ class ActivityGroupRegressionExperiment(BaseMLflowRegressionExperiment):
             ],
             ignore_index=True,
         )
-        group_manifest.to_parquet(output_dir / "group_run_manifest.parquet", index=False)
+        group_manifest.to_parquet(
+            output_dir / "group_run_manifest.parquet", index=False
+        )
         run_manifest.to_parquet(output_dir / "run_manifest.parquet", index=False)
         split_metric_summary.to_parquet(
             output_dir / "variant_split_metrics.parquet", index=False
@@ -2552,7 +2564,8 @@ class ActivityGroupRegressionExperiment(BaseMLflowRegressionExperiment):
                             training_run = _run_phase(
                                 self.logger,
                                 f"train phase [{group_name}/{architecture}]",
-                                lambda group_dataset=dataset, current_model_config=model_config: (
+                                lambda group_dataset=dataset,
+                                current_model_config=model_config: (
                                     _train_activity_group_model(
                                         group_dataset["train"],
                                         group_dataset["validation"],
@@ -2658,18 +2671,16 @@ class ActivityGroupRegressionExperiment(BaseMLflowRegressionExperiment):
                                     )
                                 )
 
-                                variant_output_dir = (
-                                    self._materialize_variant_output(
-                                        group_name=group_name,
-                                        architecture=architecture,
-                                        model_config=model_config,
-                                        training_run=training_run,
-                                        forecasts=forecasts,
-                                        split_metrics=split_metrics,
-                                        group_dataset=dataset,
-                                        group_rgi_vocabulary=group_rgi_vocabulary,
-                                        run_id=run_id,
-                                    )
+                                variant_output_dir = self._materialize_variant_output(
+                                    group_name=group_name,
+                                    architecture=architecture,
+                                    model_config=model_config,
+                                    training_run=training_run,
+                                    forecasts=forecasts,
+                                    split_metrics=split_metrics,
+                                    group_dataset=dataset,
+                                    group_rgi_vocabulary=group_rgi_vocabulary,
+                                    run_id=run_id,
                                 )
                                 mlflow.log_artifacts(str(variant_output_dir))
 
