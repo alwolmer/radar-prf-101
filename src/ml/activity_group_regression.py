@@ -13,7 +13,8 @@ Pipeline summary:
    - seasonal lag features aligned to each forecast step
    - RGI identity features
    - future holiday features
-5. Train one model per `(activity_group, architecture)` pair.
+5. Train one comparison parent run per `activity_group`, with one child model
+   run per architecture for like-for-like metric comparison.
 6. Persist gold-layer feature artefacts plus experiment outputs and a feature-store
    style view of the final design matrix per architecture.
 """
@@ -103,16 +104,15 @@ def _print_training_summary(result: Mapping[str, Any]) -> None:
     persisted_output = Path(str(result["persisted_output"]))
     print(f"Persisted output: {persisted_output}")
 
-    feature_store_root = persisted_output / "feature_store"
-    if feature_store_root.exists():
-        print(f"Feature store: {feature_store_root}")
     runs_root = persisted_output / "runs"
     if runs_root.exists():
         print(f"Variant artifacts: {runs_root}")
+        print(f"Feature store: {runs_root}/<activity_group>/<architecture>/feature_store")
 
     tracking_uri = str(result.get("tracking_uri", ""))
     browser_tracking_uri = _resolve_browser_tracking_uri(tracking_uri)
     variant_results = list(result.get("variant_results", []))
+    group_results = list(result.get("group_results", []))
     experiment_id = next(
         (
             item.get("experiment_id")
@@ -126,6 +126,16 @@ def _print_training_summary(result: Mapping[str, Any]) -> None:
         and experiment_id is not None
     ):
         print(f"Experiment UI: {browser_tracking_uri}/#/experiments/{experiment_id}")
+        for item in group_results:
+            run_id = item.get("run_id")
+            parent_experiment_id = item.get("experiment_id") or experiment_id
+            if not run_id:
+                continue
+            print(
+                "Comparison UI "
+                f"[{item['group_name']}]: "
+                f"{browser_tracking_uri}/#/experiments/{parent_experiment_id}/runs/{run_id}"
+            )
         for item in variant_results:
             run_id = item.get("run_id")
             if not run_id:
@@ -143,6 +153,24 @@ def _env_with_fallback(*names: str, default: str) -> str:
         if raw:
             return raw
     return default
+
+
+def _comparison_dataset_key(
+    *,
+    group_name: str,
+    feature_config: ActivityGroupFeaturizationConfig,
+    sequence_config: nb4.Notebook4Config,
+    n_group_rgis: int,
+) -> str:
+    seasonal_lags = "-".join(str(value) for value in feature_config.seasonal_lag_weeks)
+    return (
+        f"{group_name}|"
+        f"history={feature_config.recent_history_weeks}|"
+        f"horizon={sequence_config.forecast_horizon_weeks}|"
+        f"latency={sequence_config.latency_gap_weeks}|"
+        f"lags={seasonal_lags}|"
+        f"rgis={n_group_rgis}"
+    )
 
 
 def _csv_env(
@@ -1652,6 +1680,279 @@ def _write_prediction_parity_plot(forecasts: pd.DataFrame, destination: Path) ->
     plt.close(fig)
 
 
+def _write_architecture_comparison_plot(
+    comparison_metrics: pd.DataFrame, destination: Path
+) -> None:
+    import matplotlib.pyplot as plt
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    plot_frame = comparison_metrics.copy()
+    if plot_frame.empty:
+        fig, axis = plt.subplots(figsize=(8, 4))
+        axis.text(0.5, 0.5, "No metrics available", ha="center", va="center")
+        axis.set_axis_off()
+        fig.tight_layout()
+        fig.savefig(destination, dpi=160, bbox_inches="tight")
+        plt.close(fig)
+        return
+
+    plot_frame["label"] = (
+        plot_frame["split"].astype(str) + "\n" + plot_frame["architecture"].astype(str)
+    )
+    split_colors = {
+        "train": "#26547c",
+        "validation": "#f4a259",
+        "test": "#2a9d8f",
+    }
+    rmse_colors = [
+        split_colors.get(str(split), "#1d6fd6") for split in plot_frame["split"]
+    ]
+    r2_colors = [split_colors.get(str(split), "#2a9d8f") for split in plot_frame["split"]]
+
+    test_rows = plot_frame.loc[plot_frame["split"].eq("test")].copy()
+    best_test_rmse = (
+        float(test_rows["rmse"].min()) if not test_rows.empty else None
+    )
+    best_test_r2 = float(test_rows["r2"].max()) if not test_rows.empty else None
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    rmse_bars = axes[0].bar(plot_frame["label"], plot_frame["rmse"], color=rmse_colors)
+    axes[0].set_title("RMSE by Split / Architecture")
+    axes[0].set_ylabel("RMSE")
+    axes[0].tick_params(axis="x", rotation=30)
+
+    r2_bars = axes[1].bar(plot_frame["label"], plot_frame["r2"], color=r2_colors)
+    axes[1].set_title("R2 by Split / Architecture")
+    axes[1].set_ylabel("R2")
+    axes[1].tick_params(axis="x", rotation=30)
+
+    for idx, row in enumerate(plot_frame.itertuples(index=False)):
+        rmse_bar = rmse_bars[idx]
+        rmse_value = float(row.rmse)
+        axes[0].text(
+            rmse_bar.get_x() + rmse_bar.get_width() / 2,
+            rmse_bar.get_height(),
+            f"{rmse_value:.3f}",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+        )
+        if row.split == "test" and best_test_rmse is not None and np.isclose(
+            rmse_value, best_test_rmse
+        ):
+            rmse_bar.set_edgecolor("#111111")
+            rmse_bar.set_linewidth(2.5)
+            rmse_bar.set_facecolor("#ffd166")
+            axes[0].text(
+                rmse_bar.get_x() + rmse_bar.get_width() / 2,
+                rmse_bar.get_height(),
+                "best test",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+                fontweight="bold",
+                color="#111111",
+            )
+
+        r2_bar = r2_bars[idx]
+        r2_value = float(row.r2)
+        r2_y = r2_bar.get_height()
+        r2_va = "bottom" if r2_y >= 0 else "top"
+        axes[1].text(
+            r2_bar.get_x() + r2_bar.get_width() / 2,
+            r2_y,
+            f"{r2_value:.3f}",
+            ha="center",
+            va=r2_va,
+            fontsize=8,
+        )
+        if row.split == "test" and best_test_r2 is not None and np.isclose(
+            r2_value, best_test_r2
+        ):
+            r2_bar.set_edgecolor("#111111")
+            r2_bar.set_linewidth(2.5)
+            r2_bar.set_facecolor("#ffd166")
+            axes[1].text(
+                r2_bar.get_x() + r2_bar.get_width() / 2,
+                r2_y,
+                "best test",
+                ha="center",
+                va="bottom" if r2_y >= 0 else "top",
+                fontsize=8,
+                fontweight="bold",
+                color="#111111",
+            )
+
+    fig.tight_layout()
+    fig.savefig(destination, dpi=160, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _build_test_window_comparison_frame(
+    group_variant_results: list[dict[str, Any]],
+    *,
+    n_weeks: int = 8,
+) -> pd.DataFrame:
+    forecast_frames = [
+        result["forecasts"]
+        for result in group_variant_results
+        if result.get("forecasts") is not None and not result["forecasts"].empty
+    ]
+    if not forecast_frames:
+        return pd.DataFrame(
+            columns=[
+                "group_name",
+                "architecture",
+                "rgi_id",
+                "rgi_name",
+                "uf",
+                "week_start",
+                "actual",
+                "prediction",
+            ]
+        )
+
+    all_forecasts = pd.concat(forecast_frames, ignore_index=True)
+    test_forecasts = all_forecasts.loc[all_forecasts["split"].eq("test")].copy()
+    if test_forecasts.empty:
+        return pd.DataFrame(
+            columns=[
+                "group_name",
+                "architecture",
+                "rgi_id",
+                "rgi_name",
+                "uf",
+                "week_start",
+                "actual",
+                "prediction",
+            ]
+        )
+
+    first_test_weeks = (
+        sorted(pd.to_datetime(test_forecasts["week_start"]).dropna().unique())[:n_weeks]
+    )
+    if not first_test_weeks:
+        return pd.DataFrame(
+            columns=[
+                "group_name",
+                "architecture",
+                "rgi_id",
+                "rgi_name",
+                "uf",
+                "week_start",
+                "actual",
+                "prediction",
+            ]
+        )
+
+    comparison_frame = (
+        test_forecasts.loc[test_forecasts["week_start"].isin(first_test_weeks)]
+        .groupby(
+            ["group_name", "architecture", "rgi_id", "rgi_name", "uf", "week_start"],
+            as_index=False,
+        )[["actual", "prediction"]]
+        .mean(numeric_only=True)
+        .sort_values(["uf", "rgi_id", "week_start", "architecture"])
+        .reset_index(drop=True)
+    )
+    return comparison_frame
+
+
+def _write_test_window_rgi_comparison_plot(
+    comparison_frame: pd.DataFrame,
+    destination: Path,
+) -> None:
+    import matplotlib.pyplot as plt
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if comparison_frame.empty:
+        fig, axis = plt.subplots(figsize=(10, 4))
+        axis.text(0.5, 0.5, "No test forecasts available", ha="center", va="center")
+        axis.set_axis_off()
+        fig.tight_layout()
+        fig.savefig(destination, dpi=160, bbox_inches="tight")
+        plt.close(fig)
+        return
+
+    rgi_index = (
+        comparison_frame[["uf", "rgi_id", "rgi_name"]]
+        .drop_duplicates()
+        .sort_values(["uf", "rgi_id"])
+        .reset_index(drop=True)
+    )
+    architectures = sorted(comparison_frame["architecture"].astype(str).unique())
+    color_cycle = ["#1d6fd6", "#e76f51", "#2a9d8f", "#7b2cbf", "#ef476f", "#8d99ae"]
+    architecture_colors = {
+        architecture: color_cycle[idx % len(color_cycle)]
+        for idx, architecture in enumerate(architectures)
+    }
+
+    n_rows = max(len(rgi_index), 1)
+    fig_height = max(2.6 * n_rows, 4.0)
+    fig, axes = plt.subplots(n_rows, 1, figsize=(16, fig_height), sharex=True)
+    if not isinstance(axes, np.ndarray):
+        axes = np.array([axes])
+
+    ordered_weeks = sorted(pd.to_datetime(comparison_frame["week_start"]).dropna().unique())
+    week_labels = [pd.Timestamp(week).strftime("%Y-%m-%d") for week in ordered_weeks]
+
+    for axis, rgi_row in zip(axes, rgi_index.itertuples(index=False), strict=True):
+        rgi_frame = comparison_frame.loc[
+            comparison_frame["rgi_id"].astype(str).eq(str(rgi_row.rgi_id))
+        ].copy()
+        actual_timeline = (
+            rgi_frame.groupby("week_start", as_index=False)["actual"]
+            .mean(numeric_only=True)
+            .sort_values("week_start")
+        )
+        axis.plot(
+            actual_timeline["week_start"],
+            actual_timeline["actual"],
+            color="#111111",
+            linewidth=2.5,
+            marker="o",
+            label="actual",
+        )
+        for architecture in architectures:
+            architecture_frame = (
+                rgi_frame.loc[rgi_frame["architecture"].eq(architecture)]
+                .sort_values("week_start")
+                .reset_index(drop=True)
+            )
+            if architecture_frame.empty:
+                continue
+            axis.plot(
+                architecture_frame["week_start"],
+                architecture_frame["prediction"],
+                color=architecture_colors[architecture],
+                linewidth=1.8,
+                marker="o",
+                alpha=0.95,
+                label=architecture,
+            )
+        axis.set_title(f"{rgi_row.uf} / {rgi_row.rgi_id} / {rgi_row.rgi_name}", loc="left")
+        axis.set_ylabel("Accidents")
+        axis.grid(axis="y", alpha=0.25)
+
+    axes[-1].set_xlabel("Test week start")
+    axes[-1].set_xticks(ordered_weeks)
+    axes[-1].set_xticklabels(week_labels, rotation=45, ha="right")
+    handles, labels = axes[0].get_legend_handles_labels()
+    if handles:
+        unique = dict(zip(labels, handles, strict=False))
+        fig.legend(
+            unique.values(),
+            unique.keys(),
+            loc="upper center",
+            ncol=min(len(unique), 4),
+            frameon=False,
+            bbox_to_anchor=(0.5, 1.0),
+        )
+    fig.tight_layout(rect=(0, 0, 1, 0.98))
+    fig.savefig(destination, dpi=160, bbox_inches="tight")
+    plt.close(fig)
+
+
 class ActivityGroupFeaturizationRun(BaseFeaturizationRun):
     """Build gold-layer activity-group feature artefacts from canonical BR-101 inputs."""
 
@@ -1872,14 +2173,31 @@ class ActivityGroupRegressionExperiment(BaseMLflowRegressionExperiment):
             return f"{self.experiment_config.run_name}-{group_name}-{architecture}"
         return f"{group_name}-{architecture}"
 
+    def _group_parent_run_name(self, group_name: str) -> str:
+        if self.experiment_config.run_name:
+            return f"{self.experiment_config.run_name}-{group_name}-comparison"
+        return f"{group_name}-comparison"
+
     def _variant_relative_dir(self, group_name: str, architecture: str) -> Path:
         return Path("runs") / group_name / architecture
+
+    def _group_comparison_relative_dir(self, group_name: str) -> Path:
+        return Path("runs") / group_name / "comparison"
 
     def _variant_output_dir(self, group_name: str, architecture: str) -> Path:
         output_dir = (
             self._staging_dir
             / "activity_group_regression"
             / self._variant_relative_dir(group_name, architecture)
+        )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return output_dir
+
+    def _group_comparison_output_dir(self, group_name: str) -> Path:
+        output_dir = (
+            self._staging_dir
+            / "activity_group_regression"
+            / self._group_comparison_relative_dir(group_name)
         )
         output_dir.mkdir(parents=True, exist_ok=True)
         return output_dir
@@ -1993,19 +2311,92 @@ class ActivityGroupRegressionExperiment(BaseMLflowRegressionExperiment):
             (config_dir / f"{architecture}.yaml").write_text(
                 model_config.config_path.read_text(encoding="utf-8"),
                 encoding="utf-8",
-            )
+        )
 
+        return output_dir
+
+    def _materialize_group_comparison_output(
+        self,
+        *,
+        group_name: str,
+        group_variant_results: list[dict[str, Any]],
+        run_id: str | None,
+    ) -> Path:
+        output_dir = self._group_comparison_output_dir(group_name)
+        comparison_metrics = pd.concat(
+            [
+                result["split_metrics"].assign(architecture=result["architecture"])
+                for result in group_variant_results
+            ],
+            ignore_index=True,
+        )
+        comparison_metrics.to_parquet(
+            output_dir / "architecture_split_metrics.parquet", index=False
+        )
+        test_window_comparison = _build_test_window_comparison_frame(
+            group_variant_results
+        )
+        test_window_comparison.to_parquet(
+            output_dir / "test_window_forecasts.parquet", index=False
+        )
+
+        plots_dir = output_dir / "plots"
+        _write_architecture_comparison_plot(
+            comparison_metrics,
+            plots_dir / "architecture_comparison.png",
+        )
+        _write_test_window_rgi_comparison_plot(
+            test_window_comparison,
+            plots_dir / "test_window_rgi_comparison.png",
+        )
+
+        _write_json(
+            output_dir / "comparison_manifest.json",
+            {
+                "run_id": run_id,
+                "group_name": group_name,
+                "tracking_uri": self.experiment_config.tracking_uri,
+                "architectures": [
+                    result["architecture"] for result in group_variant_results
+                ],
+                "child_run_ids": {
+                    result["architecture"]: result["run_id"]
+                    for result in group_variant_results
+                },
+                "comparison_artifacts": {
+                    "architecture_split_metrics": "architecture_split_metrics.parquet",
+                    "test_window_forecasts": "test_window_forecasts.parquet",
+                    "architecture_comparison_plot": "plots/architecture_comparison.png",
+                    "test_window_rgi_plot": "plots/test_window_rgi_comparison.png",
+                },
+            },
+        )
         return output_dir
 
     def _finalize_experiment_output(
         self,
         *,
         feature_data: dict[str, Any],
+        group_results: list[dict[str, Any]],
         variant_results: list[dict[str, Any]],
     ) -> Path:
         output_dir = self._staging_dir / "activity_group_regression"
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        group_manifest = pd.DataFrame(
+            [
+                {
+                    "group_name": result["group_name"],
+                    "run_id": result["run_id"],
+                    "experiment_id": result["experiment_id"],
+                    "comparison_dataset_key": result["comparison_dataset_key"],
+                    "relative_artifact_dir": str(
+                        self._group_comparison_relative_dir(result["group_name"])
+                    ),
+                }
+                for result in group_results
+            ]
+        )
         run_manifest = pd.DataFrame(
             [
                 {
@@ -2013,6 +2404,9 @@ class ActivityGroupRegressionExperiment(BaseMLflowRegressionExperiment):
                     "architecture": result["architecture"],
                     "run_id": result["run_id"],
                     "experiment_id": result["experiment_id"],
+                    "parent_run_id": result["parent_run_id"],
+                    "parent_experiment_id": result["parent_experiment_id"],
+                    "comparison_dataset_key": result["comparison_dataset_key"],
                     "relative_artifact_dir": str(
                         self._variant_relative_dir(
                             result["group_name"], result["architecture"]
@@ -2050,6 +2444,7 @@ class ActivityGroupRegressionExperiment(BaseMLflowRegressionExperiment):
             ],
             ignore_index=True,
         )
+        group_manifest.to_parquet(output_dir / "group_run_manifest.parquet", index=False)
         run_manifest.to_parquet(output_dir / "run_manifest.parquet", index=False)
         split_metric_summary.to_parquet(
             output_dir / "variant_split_metrics.parquet", index=False
@@ -2063,6 +2458,7 @@ class ActivityGroupRegressionExperiment(BaseMLflowRegressionExperiment):
                 "experiment_name": self.experiment_config.experiment_name,
                 "tracking_uri": self.experiment_config.tracking_uri,
                 "feature_output_uri": feature_data["output_uri"],
+                "group_comparison_count": len(group_results),
                 "variant_count": len(variant_results),
             },
         )
@@ -2083,6 +2479,7 @@ class ActivityGroupRegressionExperiment(BaseMLflowRegressionExperiment):
                 lambda: self.featurize(raw_data),
             )
 
+            group_results: list[dict[str, Any]] = []
             variant_results: list[dict[str, Any]] = []
             group_datasets = feature_data["group_datasets"]
             for group_name in nb4.GROUP_ORDER:
@@ -2090,6 +2487,12 @@ class ActivityGroupRegressionExperiment(BaseMLflowRegressionExperiment):
                 if dataset is None:
                     continue
                 n_group_rgis = int(dataset["meta"]["n_rgis"])
+                comparison_dataset_key = _comparison_dataset_key(
+                    group_name=group_name,
+                    feature_config=self.feature_run.featurization_config,
+                    sequence_config=self.sequence_config,
+                    n_group_rgis=n_group_rgis,
+                )
                 group_rgi_vocabulary = (
                     feature_data["group_rgi_vocabulary"]
                     .loc[
@@ -2100,128 +2503,206 @@ class ActivityGroupRegressionExperiment(BaseMLflowRegressionExperiment):
                     .reset_index(drop=True)
                 )
 
-                for architecture in self.experiment_config.architectures:
-                    model_config = self.experiment_config.model_configs[architecture]
-                    training_run = _run_phase(
-                        self.logger,
-                        f"train phase [{group_name}/{architecture}]",
-                        lambda group_dataset=dataset, current_model_config=model_config: (
-                            _train_activity_group_model(
-                                group_dataset["train"],
-                                group_dataset["validation"],
-                                sequence_config=current_model_config.apply_to(
-                                    self.sequence_config
-                                ),
-                                feature_config=self.feature_run.featurization_config,
-                                model_config=current_model_config,
-                                architecture=architecture,
-                                n_rgis=n_group_rgis,
-                                show_progress=self.experiment_config.show_progress,
+                group_variant_results: list[dict[str, Any]] = []
+                with contextlib.redirect_stdout(io.StringIO()):
+                    with mlflow.start_run(
+                        run_name=self._group_parent_run_name(group_name)
+                    ) as parent_run:
+                        parent_run_id = parent_run.info.run_id
+                        parent_experiment_id = getattr(
+                            parent_run.info, "experiment_id", None
+                        )
+                        mlflow.set_tags(
+                            _normalize_mlflow_params(
+                                {
+                                    "job_name": self.job_name,
+                                    "experiment_type": "regression_group_comparison",
+                                    "model_family": "activity_group_rnn",
+                                    "group_name": group_name,
+                                    "comparison_scope": "architecture",
+                                    "comparison_dataset_key": comparison_dataset_key,
+                                }
                             )
-                        ),
-                    )
+                        )
+                        mlflow.log_params(
+                            _normalize_mlflow_params(
+                                {
+                                    "gold_input_subpath": self.feature_run.featurization_config.gold_input_subpath,
+                                    "feature_output_subpath": self.feature_run.featurization_config.output_subpath,
+                                    "recent_history_weeks": self.feature_run.featurization_config.recent_history_weeks,
+                                    "forecast_horizon_weeks": self.sequence_config.forecast_horizon_weeks,
+                                    "latency_gap_weeks": self.sequence_config.latency_gap_weeks,
+                                    "seasonal_lag_weeks": ",".join(
+                                        str(value)
+                                        for value in self.feature_run.featurization_config.seasonal_lag_weeks
+                                    ),
+                                    "n_group_rgis": n_group_rgis,
+                                    "architectures": ",".join(
+                                        self.experiment_config.architectures
+                                    ),
+                                    "comparison_dataset_key": comparison_dataset_key,
+                                }
+                            )
+                        )
 
-                    forecasts = nb4.combine_forecasts(
-                        _generate_activity_group_forecasts(
-                            training_run["model"],
-                            dataset["train"],
-                            model_config=model_config,
-                            architecture=architecture,
-                            n_rgis=n_group_rgis,
-                        ),
-                        _generate_activity_group_forecasts(
-                            training_run["model"],
-                            dataset["validation"],
-                            model_config=model_config,
-                            architecture=architecture,
-                            n_rgis=n_group_rgis,
-                        ),
-                        _generate_activity_group_forecasts(
-                            training_run["model"],
-                            dataset["test"],
-                            model_config=model_config,
-                            architecture=architecture,
-                            n_rgis=n_group_rgis,
-                        ),
-                    )
-                    split_metrics = _summarize_split_metrics(forecasts)
-
-                    with contextlib.redirect_stdout(io.StringIO()):
-                        with mlflow.start_run(
-                            run_name=self._variant_run_name(group_name, architecture)
-                        ) as active_run:
-                            run_id = active_run.info.run_id
-                            experiment_id = getattr(
-                                active_run.info, "experiment_id", None
-                            )
-                            mlflow.set_tags(
-                                _normalize_mlflow_params(
-                                    {
-                                        "job_name": self.job_name,
-                                        "experiment_type": "regression_variant",
-                                        "model_family": "activity_group_rnn",
-                                        "group_name": group_name,
-                                        "architecture": architecture,
-                                    }
-                                )
-                            )
-                            mlflow.log_params(
-                                _normalize_mlflow_params(
-                                    {
-                                        "gold_input_subpath": self.feature_run.featurization_config.gold_input_subpath,
-                                        "feature_output_subpath": self.feature_run.featurization_config.output_subpath,
-                                        "recent_history_weeks": self.feature_run.featurization_config.recent_history_weeks,
-                                        "forecast_horizon_weeks": self.sequence_config.forecast_horizon_weeks,
-                                        "latency_gap_weeks": self.sequence_config.latency_gap_weeks,
-                                        "seasonal_lag_weeks": ",".join(
-                                            str(value)
-                                            for value in self.feature_run.featurization_config.seasonal_lag_weeks
+                        for architecture in self.experiment_config.architectures:
+                            model_config = self.experiment_config.model_configs[
+                                architecture
+                            ]
+                            training_run = _run_phase(
+                                self.logger,
+                                f"train phase [{group_name}/{architecture}]",
+                                lambda group_dataset=dataset, current_model_config=model_config: (
+                                    _train_activity_group_model(
+                                        group_dataset["train"],
+                                        group_dataset["validation"],
+                                        sequence_config=current_model_config.apply_to(
+                                            self.sequence_config
                                         ),
-                                        "n_group_rgis": n_group_rgis,
-                                        **{
-                                            key: value
-                                            for key, value in asdict(model_config).items()
-                                            if key != "config_path"
-                                        },
-                                    }
-                                )
-                            )
-                            mlflow.log_metrics(
-                                _normalize_mlflow_metrics(
-                                    {
-                                        f"rmse_{row.split}": row.rmse
-                                        for row in split_metrics.itertuples(index=False)
-                                    }
-                                    | {
-                                        f"r2_{row.split}": row.r2
-                                        for row in split_metrics.itertuples(index=False)
-                                    }
-                                )
+                                        feature_config=self.feature_run.featurization_config,
+                                        model_config=current_model_config,
+                                        architecture=architecture,
+                                        n_rgis=n_group_rgis,
+                                        show_progress=self.experiment_config.show_progress,
+                                    )
+                                ),
                             )
 
-                            variant_output_dir = self._materialize_variant_output(
-                                group_name=group_name,
-                                architecture=architecture,
-                                model_config=model_config,
-                                training_run=training_run,
-                                forecasts=forecasts,
-                                split_metrics=split_metrics,
-                                group_dataset=dataset,
-                                group_rgi_vocabulary=group_rgi_vocabulary,
-                                run_id=run_id,
+                            forecasts = nb4.combine_forecasts(
+                                _generate_activity_group_forecasts(
+                                    training_run["model"],
+                                    dataset["train"],
+                                    model_config=model_config,
+                                    architecture=architecture,
+                                    n_rgis=n_group_rgis,
+                                ),
+                                _generate_activity_group_forecasts(
+                                    training_run["model"],
+                                    dataset["validation"],
+                                    model_config=model_config,
+                                    architecture=architecture,
+                                    n_rgis=n_group_rgis,
+                                ),
+                                _generate_activity_group_forecasts(
+                                    training_run["model"],
+                                    dataset["test"],
+                                    model_config=model_config,
+                                    architecture=architecture,
+                                    n_rgis=n_group_rgis,
+                                ),
                             )
-                            mlflow.log_artifacts(str(variant_output_dir))
+                            split_metrics = _summarize_split_metrics(forecasts)
 
-                    variant_results.append(
-                        {
-                            "group_name": group_name,
-                            "architecture": architecture,
-                            "run_id": run_id,
-                            "experiment_id": experiment_id,
-                            "split_metrics": split_metrics,
-                            "artifact_dir": variant_output_dir,
-                        }
-                    )
+                            with mlflow.start_run(
+                                run_name=self._variant_run_name(
+                                    group_name, architecture
+                                ),
+                                nested=True,
+                            ) as active_run:
+                                run_id = active_run.info.run_id
+                                experiment_id = getattr(
+                                    active_run.info, "experiment_id", None
+                                )
+                                mlflow.set_tags(
+                                    _normalize_mlflow_params(
+                                        {
+                                            "job_name": self.job_name,
+                                            "experiment_type": "regression_variant",
+                                            "model_family": "activity_group_rnn",
+                                            "group_name": group_name,
+                                            "architecture": architecture,
+                                            "comparison_scope": "architecture",
+                                            "comparison_dataset_key": comparison_dataset_key,
+                                            "comparison_parent_run_id": parent_run_id,
+                                        }
+                                    )
+                                )
+                                mlflow.log_params(
+                                    _normalize_mlflow_params(
+                                        {
+                                            "gold_input_subpath": self.feature_run.featurization_config.gold_input_subpath,
+                                            "feature_output_subpath": self.feature_run.featurization_config.output_subpath,
+                                            "recent_history_weeks": self.feature_run.featurization_config.recent_history_weeks,
+                                            "forecast_horizon_weeks": self.sequence_config.forecast_horizon_weeks,
+                                            "latency_gap_weeks": self.sequence_config.latency_gap_weeks,
+                                            "seasonal_lag_weeks": ",".join(
+                                                str(value)
+                                                for value in self.feature_run.featurization_config.seasonal_lag_weeks
+                                            ),
+                                            "n_group_rgis": n_group_rgis,
+                                            "comparison_dataset_key": comparison_dataset_key,
+                                            **{
+                                                key: value
+                                                for key, value in asdict(
+                                                    model_config
+                                                ).items()
+                                                if key != "config_path"
+                                            },
+                                        }
+                                    )
+                                )
+                                mlflow.log_metrics(
+                                    _normalize_mlflow_metrics(
+                                        {
+                                            f"rmse_{row.split}": row.rmse
+                                            for row in split_metrics.itertuples(
+                                                index=False
+                                            )
+                                        }
+                                        | {
+                                            f"r2_{row.split}": row.r2
+                                            for row in split_metrics.itertuples(
+                                                index=False
+                                            )
+                                        }
+                                    )
+                                )
+
+                                variant_output_dir = (
+                                    self._materialize_variant_output(
+                                        group_name=group_name,
+                                        architecture=architecture,
+                                        model_config=model_config,
+                                        training_run=training_run,
+                                        forecasts=forecasts,
+                                        split_metrics=split_metrics,
+                                        group_dataset=dataset,
+                                        group_rgi_vocabulary=group_rgi_vocabulary,
+                                        run_id=run_id,
+                                    )
+                                )
+                                mlflow.log_artifacts(str(variant_output_dir))
+
+                            variant_record = {
+                                "group_name": group_name,
+                                "architecture": architecture,
+                                "run_id": run_id,
+                                "experiment_id": experiment_id,
+                                "parent_run_id": parent_run_id,
+                                "parent_experiment_id": parent_experiment_id,
+                                "comparison_dataset_key": comparison_dataset_key,
+                                "forecasts": forecasts,
+                                "split_metrics": split_metrics,
+                                "artifact_dir": variant_output_dir,
+                            }
+                            variant_results.append(variant_record)
+                            group_variant_results.append(variant_record)
+
+                        parent_output_dir = self._materialize_group_comparison_output(
+                            group_name=group_name,
+                            group_variant_results=group_variant_results,
+                            run_id=parent_run_id,
+                        )
+                        mlflow.log_artifacts(str(parent_output_dir))
+                        group_results.append(
+                            {
+                                "group_name": group_name,
+                                "run_id": parent_run_id,
+                                "experiment_id": parent_experiment_id,
+                                "comparison_dataset_key": comparison_dataset_key,
+                                "artifact_dir": parent_output_dir,
+                            }
+                        )
 
             if not variant_results:
                 raise ValueError(
@@ -2234,6 +2715,7 @@ class ActivityGroupRegressionExperiment(BaseMLflowRegressionExperiment):
                 lambda: self.datalake.persist_directory(
                     self._finalize_experiment_output(
                         feature_data=feature_data,
+                        group_results=group_results,
                         variant_results=variant_results,
                     ),
                     self.experiment_config.output_subpath,
@@ -2249,6 +2731,7 @@ class ActivityGroupRegressionExperiment(BaseMLflowRegressionExperiment):
                 "experiment_name": self.experiment_name,
                 "persisted_output": persisted_root,
                 "feature_data": feature_data,
+                "group_results": group_results,
                 "variant_results": variant_results,
             }
         except Exception:

@@ -81,10 +81,16 @@ Artefato gold implementado:
 O runtime suportado localmente é o serviço `spark-env` definido em `docker-compose.yml`.
 
 ```bash
-make docker-build
-make mlflow-build
+make docker-up
 make mlflow-up
 make install
+```
+
+Os targets `docker-up` e `mlflow-up` fazem `pull` das imagens remotas configuradas e sobem os containers. Quando houver mudança no `docker/etl/Dockerfile`, `pyproject.toml` ou `uv.lock`, publique uma nova imagem antes:
+
+```bash
+make docker-publish
+make mlflow-publish
 ```
 
 Targets principais:

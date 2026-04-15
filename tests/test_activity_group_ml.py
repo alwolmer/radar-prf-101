@@ -9,6 +9,8 @@ from src.ml.activity_group_regression import (
     ActivityGroupExperimentConfig,
     ActivityGroupFeaturizationConfig,
     ActivityGroupFeaturizationRun,
+    ActivityGroupModelConfig,
+    ActivityGroupRegressionExperiment,
 )
 
 
@@ -227,3 +229,310 @@ def test_activity_group_experiment_config_loads_model_yaml_overrides(
     assert config.model_configs["lstm"].dense_units_second == 20
     assert config.model_configs["lstm"].random_seed == 88
     assert config.model_configs["lstm"].rgi_embedding_dim == 6
+
+
+def test_activity_group_experiment_persists_group_comparison_manifest(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    data_root = tmp_path / "data"
+    monkeypatch.setenv("DATALAKE_BACKEND", "local")
+    monkeypatch.setenv("DATALAKE_LOCAL_ROOT", str(data_root))
+
+    sequence_config = nb4.Notebook4Config(
+        project_root=tmp_path,
+        notebook3_silver_dir=tmp_path / "unused" / "silver",
+        notebook3_gold_dir=tmp_path / "unused" / "gold",
+        silver_output_dir=tmp_path / "data" / "silver" / "out",
+        gold_output_dir=tmp_path / "data" / "gold" / "out",
+        train_start_year=2024,
+        train_start_week=1,
+        train_end_year=2024,
+        train_end_week=4,
+        validation_start_year=2024,
+        validation_start_week=5,
+        validation_end_year=2024,
+        validation_end_week=6,
+        test_start_year=2024,
+        test_start_week=7,
+        test_end_year=2024,
+        test_end_week=8,
+        lookback_weeks=2,
+        latency_gap_weeks=1,
+        forecast_horizon_weeks=1,
+        rnn_train_stride_weeks=1,
+        rnn_eval_stride_weeks=1,
+        low_activity_share=0.34,
+        high_activity_share=0.33,
+    )
+    feature_config = ActivityGroupFeaturizationConfig(
+        project_root=tmp_path,
+        sequence_config=sequence_config,
+        output_subpath="gold/ml/activity_group_features",
+        recent_history_weeks=2,
+        seasonal_lag_weeks=(1, 2),
+    )
+    model_configs = {
+        "gru": ActivityGroupModelConfig(
+            architecture="gru",
+            recurrent_units=16,
+            dense_units_first=32,
+            dense_units_second=16,
+            random_seed=7,
+            max_epochs=5,
+            batch_size=8,
+            early_stopping_patience=2,
+        ),
+        "lstm": ActivityGroupModelConfig(
+            architecture="lstm",
+            recurrent_units=16,
+            dense_units_first=32,
+            dense_units_second=16,
+            random_seed=7,
+            max_epochs=5,
+            batch_size=8,
+            early_stopping_patience=2,
+        ),
+    }
+    experiment_config = ActivityGroupExperimentConfig(
+        project_root=tmp_path,
+        tracking_uri="http://mlflow:5000",
+        experiment_name="activity-group-test",
+        architectures=("gru", "lstm"),
+        show_progress=False,
+        model_config_dir=tmp_path,
+        model_configs=model_configs,
+    )
+    experiment = ActivityGroupRegressionExperiment(
+        experiment_config=experiment_config,
+        feature_config=feature_config,
+    )
+
+    split_metrics = pd.DataFrame(
+        [
+            {"split": "train", "rmse": 1.0, "r2": 0.8, "n_predictions": 10},
+            {"split": "validation", "rmse": 1.2, "r2": 0.7, "n_predictions": 5},
+            {"split": "test", "rmse": 1.4, "r2": 0.6, "n_predictions": 4},
+        ]
+    )
+    comparison_dataset_key = "low_activity|history=2|horizon=1|latency=1|lags=1-2|rgis=3"
+    output_dir = experiment._finalize_experiment_output(
+        feature_data={
+            "output_uri": str(data_root / "gold" / "ml" / "activity_group_features"),
+            "group_sequence_manifest": pd.DataFrame(
+                [{"group_name": "low_activity", "split": "train"}]
+            ),
+        },
+        group_results=[
+            {
+                "group_name": "low_activity",
+                "run_id": "parent-run",
+                "experiment_id": "1",
+                "comparison_dataset_key": comparison_dataset_key,
+                "artifact_dir": tmp_path / "artifacts" / "comparison",
+            }
+        ],
+        variant_results=[
+            {
+                "group_name": "low_activity",
+                "architecture": "gru",
+                "run_id": "child-run",
+                "experiment_id": "1",
+                "parent_run_id": "parent-run",
+                "parent_experiment_id": "1",
+                "comparison_dataset_key": comparison_dataset_key,
+                "split_metrics": split_metrics,
+                "artifact_dir": tmp_path / "artifacts" / "gru",
+            }
+        ],
+    )
+
+    group_manifest = pd.read_parquet(output_dir / "group_run_manifest.parquet")
+    run_manifest = pd.read_parquet(output_dir / "run_manifest.parquet")
+
+    assert group_manifest.loc[0, "group_name"] == "low_activity"
+    assert group_manifest.loc[0, "run_id"] == "parent-run"
+    assert group_manifest.loc[0, "comparison_dataset_key"] == comparison_dataset_key
+    assert run_manifest.loc[0, "run_id"] == "child-run"
+    assert run_manifest.loc[0, "parent_run_id"] == "parent-run"
+    assert run_manifest.loc[0, "comparison_dataset_key"] == comparison_dataset_key
+
+
+def test_activity_group_comparison_output_materializes_plots_and_test_window_data(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    data_root = tmp_path / "data"
+    monkeypatch.setenv("DATALAKE_BACKEND", "local")
+    monkeypatch.setenv("DATALAKE_LOCAL_ROOT", str(data_root))
+
+    sequence_config = nb4.Notebook4Config(
+        project_root=tmp_path,
+        notebook3_silver_dir=tmp_path / "unused" / "silver",
+        notebook3_gold_dir=tmp_path / "unused" / "gold",
+        silver_output_dir=tmp_path / "data" / "silver" / "out",
+        gold_output_dir=tmp_path / "data" / "gold" / "out",
+        train_start_year=2024,
+        train_start_week=1,
+        train_end_year=2024,
+        train_end_week=4,
+        validation_start_year=2024,
+        validation_start_week=5,
+        validation_end_year=2024,
+        validation_end_week=6,
+        test_start_year=2024,
+        test_start_week=7,
+        test_end_year=2024,
+        test_end_week=14,
+        lookback_weeks=2,
+        latency_gap_weeks=1,
+        forecast_horizon_weeks=1,
+        rnn_train_stride_weeks=1,
+        rnn_eval_stride_weeks=1,
+        low_activity_share=0.34,
+        high_activity_share=0.33,
+    )
+    feature_config = ActivityGroupFeaturizationConfig(
+        project_root=tmp_path,
+        sequence_config=sequence_config,
+        output_subpath="gold/ml/activity_group_features",
+        recent_history_weeks=2,
+        seasonal_lag_weeks=(1, 2),
+    )
+    experiment_config = ActivityGroupExperimentConfig(
+        project_root=tmp_path,
+        tracking_uri="http://mlflow:5000",
+        experiment_name="activity-group-test",
+        architectures=("gru", "lstm"),
+        show_progress=False,
+        model_config_dir=tmp_path,
+        model_configs={
+            "gru": ActivityGroupModelConfig(
+                architecture="gru",
+                recurrent_units=16,
+                dense_units_first=32,
+                dense_units_second=16,
+                random_seed=7,
+                max_epochs=5,
+                batch_size=8,
+                early_stopping_patience=2,
+            ),
+            "lstm": ActivityGroupModelConfig(
+                architecture="lstm",
+                recurrent_units=16,
+                dense_units_first=32,
+                dense_units_second=16,
+                random_seed=7,
+                max_epochs=5,
+                batch_size=8,
+                early_stopping_patience=2,
+            ),
+        },
+    )
+    experiment = ActivityGroupRegressionExperiment(
+        experiment_config=experiment_config,
+        feature_config=feature_config,
+    )
+
+    weeks = pd.date_range("2024-02-12", periods=8, freq="W-MON")
+
+    def build_forecasts(architecture: str, offset: int) -> pd.DataFrame:
+        rows: list[dict[str, object]] = []
+        for rgi_id, rgi_name, base_actual in [
+            ("11001", "RGI A", 1),
+            ("11002", "RGI B", 3),
+        ]:
+            for step, week_start in enumerate(weeks, start=1):
+                rows.append(
+                    {
+                        "model": f"activity_group_{architecture}",
+                        "architecture": architecture,
+                        "group_name": "low_activity",
+                        "split": "test",
+                        "rgi_id": rgi_id,
+                        "rgi_name": rgi_name,
+                        "uf": "SC",
+                        "week_start": week_start,
+                        "week_end": week_start + pd.Timedelta(days=6),
+                        "year_week": f"2024-{step:02d}",
+                        "forecast_batch_start": week_start,
+                        "cutoff_week_start": week_start - pd.Timedelta(days=7),
+                        "horizon_step": 1,
+                        "prediction": base_actual + step + offset,
+                        "actual": base_actual + step,
+                        "is_available": True,
+                        "metadata": "synthetic=1",
+                    }
+                )
+        return pd.DataFrame(rows)
+
+    comparison_output = experiment._materialize_group_comparison_output(
+        group_name="low_activity",
+        group_variant_results=[
+            {
+                "architecture": "gru",
+                "run_id": "run-gru",
+                "split_metrics": pd.DataFrame(
+                    [
+                        {
+                            "split": "train",
+                            "rmse": 0.9,
+                            "r2": 0.7,
+                            "n_predictions": 16,
+                        },
+                        {
+                            "split": "validation",
+                            "rmse": 1.1,
+                            "r2": 0.6,
+                            "n_predictions": 8,
+                        },
+                        {
+                            "split": "test",
+                            "rmse": 1.4,
+                            "r2": 0.5,
+                            "n_predictions": 16,
+                        },
+                    ]
+                ),
+                "forecasts": build_forecasts("gru", 0),
+            },
+            {
+                "architecture": "lstm",
+                "run_id": "run-lstm",
+                "split_metrics": pd.DataFrame(
+                    [
+                        {
+                            "split": "train",
+                            "rmse": 0.8,
+                            "r2": 0.75,
+                            "n_predictions": 16,
+                        },
+                        {
+                            "split": "validation",
+                            "rmse": 1.0,
+                            "r2": 0.65,
+                            "n_predictions": 8,
+                        },
+                        {
+                            "split": "test",
+                            "rmse": 1.2,
+                            "r2": 0.55,
+                            "n_predictions": 16,
+                        },
+                    ]
+                ),
+                "forecasts": build_forecasts("lstm", 1),
+            },
+        ],
+        run_id="parent-run",
+    )
+
+    assert (comparison_output / "architecture_split_metrics.parquet").exists()
+    assert (comparison_output / "test_window_forecasts.parquet").exists()
+    assert (comparison_output / "plots" / "architecture_comparison.png").exists()
+    assert (comparison_output / "plots" / "test_window_rgi_comparison.png").exists()
+
+    test_window = pd.read_parquet(comparison_output / "test_window_forecasts.parquet")
+    assert set(test_window["architecture"]) == {"gru", "lstm"}
+    assert test_window["week_start"].nunique() == 8
+    assert test_window["rgi_id"].nunique() == 2

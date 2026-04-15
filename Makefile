@@ -2,31 +2,42 @@ DOCKER_COMPOSE ?= docker compose
 SERVICE ?= spark-env
 MLFLOW_SERVICE ?= mlflow
 DOCKER_EXEC = $(DOCKER_COMPOSE) exec -T $(SERVICE)
-UV_ENV = UV_CACHE_DIR=/tmp/uv-cache
 DVC_ENV = DVC_SITE_CACHE_DIR=/tmp/dvc UV_CACHE_DIR=/tmp/uv-cache
 LOCAL_DATALAKE_ENV = DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=/app/data
 ML_ENV = DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=/app/data MLFLOW_TRACKING_URI=http://mlflow:5000
 
-.PHONY: docker-build docker-up docker-ensure-running mlflow-ensure-running install lint linter test pre-commit-install pre-commit-run dvc-status dvc-checkout dvc-repro dvc-repro-bronze dvc-repro-silver dvc-repro-gold bronze silver gold prf-source2bronze dnit-source2bronze ibge-municipios-source2bronze ibge-rgi-source2bronze prf-bronze2silver dnit-bronze2silver ibge-bronze2silver br101-rgi-weekly-panel-silver2gold mlflow-build mlflow-up activity-group-featurize activity-group-train
+.PHONY: docker-build docker-pull docker-publish docker-up docker-ensure-running mlflow-build mlflow-pull mlflow-publish mlflow-up mlflow-ensure-running install lint linter test pre-commit-install pre-commit-run dvc-status dvc-checkout dvc-repro dvc-repro-bronze dvc-repro-silver dvc-repro-gold bronze silver gold prf-source2bronze dnit-source2bronze ibge-municipios-source2bronze ibge-rgi-source2bronze prf-bronze2silver dnit-bronze2silver ibge-bronze2silver br101-rgi-weekly-panel-silver2gold activity-group-featurize activity-group-train
 
 docker-build:
 	$(DOCKER_COMPOSE) build $(SERVICE)
 
-docker-up:
+docker-pull:
+	$(DOCKER_COMPOSE) pull $(SERVICE)
+
+docker-publish: docker-build
+	$(DOCKER_COMPOSE) push $(SERVICE)
+
+docker-up: docker-pull
 	$(DOCKER_COMPOSE) up -d $(SERVICE)
 
 mlflow-build:
 	$(DOCKER_COMPOSE) build mlflow
 
-mlflow-up:
-	$(DOCKER_COMPOSE) up -d mlflow
+mlflow-pull:
+	$(DOCKER_COMPOSE) pull $(MLFLOW_SERVICE)
+
+mlflow-publish: mlflow-build
+	$(DOCKER_COMPOSE) push $(MLFLOW_SERVICE)
+
+mlflow-up: mlflow-pull
+	$(DOCKER_COMPOSE) up -d $(MLFLOW_SERVICE)
 
 docker-ensure-running:
 	@running_container="$$( $(DOCKER_COMPOSE) ps --status running -q $(SERVICE) )"; \
 	if [ -n "$$running_container" ]; then \
 		echo "$(SERVICE) is already running"; \
 	else \
-		$(DOCKER_COMPOSE) up -d $(SERVICE); \
+		$(MAKE) docker-up; \
 	fi
 
 mlflow-ensure-running:
@@ -34,11 +45,10 @@ mlflow-ensure-running:
 	if [ -n "$$running_container" ]; then \
 		echo "$(MLFLOW_SERVICE) is already running"; \
 	else \
-		$(DOCKER_COMPOSE) up -d $(MLFLOW_SERVICE); \
+		$(MAKE) mlflow-up; \
 	fi
 
-install: docker-up
-	$(DOCKER_EXEC) env $(UV_ENV) uv sync --frozen --all-groups --no-install-project
+install: docker-up mlflow-up
 
 lint: docker-ensure-running
 	$(DOCKER_EXEC) ruff check src tests
