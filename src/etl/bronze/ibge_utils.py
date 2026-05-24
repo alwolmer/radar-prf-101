@@ -7,7 +7,8 @@ import zipfile
 from pathlib import Path
 
 import requests
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import Column, DataFrame, SparkSession
+from pyspark.sql import functions as F
 from sedona.core.formatMapper.shapefileParser import (
     ShapefileReader as SedonaShapefileReader,
 )
@@ -79,6 +80,16 @@ def download_and_extract_ibge_zip(
         extract_dir = staging_dir / f"ibge_{data_type}_shp"
         zipped_payload.extractall(extract_dir)
         return extract_dir / shp_members[0]
+
+
+def fix_shapefile_string_encoding(column_name: str) -> Column:
+    """Re-decode a string column corrupted by Sedona reading UTF-8 DBF bytes as ISO-8859-1.
+
+    Sedona's ShapefileReader decodes .dbf string fields as ISO-8859-1 by default,
+    but IBGE shapefiles encode text as UTF-8.  The round-trip
+    encode(iso-8859-1) -> decode(utf-8) recovers the original characters.
+    """
+    return F.decode(F.encode(F.col(column_name), "iso-8859-1"), "utf-8")
 
 
 def load_shapefile_as_dataframe(

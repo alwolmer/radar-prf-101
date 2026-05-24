@@ -6,7 +6,7 @@ DVC_ENV = DVC_SITE_CACHE_DIR=/tmp/dvc UV_CACHE_DIR=/tmp/uv-cache
 LOCAL_DATALAKE_ENV = DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=/app/data
 ML_ENV = DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=/app/data MLFLOW_TRACKING_URI=http://mlflow:5000
 
-.PHONY: docker-build docker-pull docker-publish docker-up docker-ensure-running mlflow-build mlflow-pull mlflow-publish mlflow-up mlflow-ensure-running install lint linter test pre-commit-install pre-commit-install-local pre-commit-run dvc-status dvc-checkout dvc-repro dvc-repro-bronze dvc-repro-silver dvc-repro-gold bronze silver gold prf-source2bronze dnit-source2bronze ibge-municipios-source2bronze ibge-rgi-source2bronze prf-bronze2silver dnit-bronze2silver ibge-bronze2silver br101-rgi-weekly-panel-silver2gold activity-group-featurize activity-group-train
+.PHONY: docker-build docker-pull docker-publish docker-up docker-ensure-running mlflow-build mlflow-pull mlflow-publish mlflow-up mlflow-ensure-running install lint linter test pre-commit-install pre-commit-install-local pre-commit-run dvc-status dvc-checkout dvc-repro dvc-repro-bronze dvc-repro-silver dvc-repro-gold bronze silver gold prf-source2bronze dnit-source2bronze ibge-municipios-source2bronze ibge-rgi-source2bronze prf-bronze2silver dnit-bronze2silver ibge-bronze2silver br101-sc-municipio-silver2gold activity-group-featurize activity-group-train
 
 docker-build:
 	$(DOCKER_COMPOSE) build $(SERVICE)
@@ -86,13 +86,13 @@ dvc-repro-silver: docker-ensure-running
 	$(DOCKER_EXEC) env $(DVC_ENV) python -m dvc repro prf_bronze2silver dnit_bronze2silver ibge_bronze2silver
 
 dvc-repro-gold: docker-ensure-running
-	$(DOCKER_EXEC) env $(DVC_ENV) python -m dvc repro br101_rgi_weekly_panel_silver2gold
+	$(DOCKER_EXEC) env $(DVC_ENV) python -m dvc repro br101_sc_municipio_silver2gold
 
 bronze: prf-source2bronze dnit-source2bronze ibge-municipios-source2bronze ibge-rgi-source2bronze
 
 silver: prf-bronze2silver dnit-bronze2silver ibge-bronze2silver
 
-gold: br101-rgi-weekly-panel-silver2gold
+gold: br101-sc-municipio-silver2gold
 
 prf-source2bronze: docker-ensure-running
 	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.etl.bronze.prf_source2bronze
@@ -115,8 +115,8 @@ dnit-bronze2silver: docker-ensure-running
 ibge-bronze2silver: docker-ensure-running
 	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.etl.silver.ibge_bronze2silver
 
-br101-rgi-weekly-panel-silver2gold: docker-ensure-running
-	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.etl.gold.br101_rgi_weekly_panel_silver2gold
+br101-sc-municipio-silver2gold: docker-ensure-running
+	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.etl.gold.br101_sc_municipio_silver2gold
 
 activity-group-featurize: docker-ensure-running
 	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.ml.activity_group_regression featurize
