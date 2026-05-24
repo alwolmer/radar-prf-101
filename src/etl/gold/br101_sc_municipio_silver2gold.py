@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import tempfile
 from collections import defaultdict
 from collections.abc import Iterable
@@ -306,7 +307,6 @@ class Br101ScMunicipioSilver2Gold(BaseETLJob):
                 "nm_concu",
                 "area_km2_ibge",
                 "tipo_territorial",
-                "data_ingestion",
                 "geometry",
             )
             .orderBy("codigo_municipio")
@@ -353,7 +353,6 @@ class Br101ScMunicipioSilver2Gold(BaseETLJob):
                 "geometry": shapely_transform(
                     projected_to_geodetic.transform, geometry_proj
                 ).wkt,
-                "data_ingestion": _normalize_datetime(row.data_ingestion),
                 "_geometry_proj": geometry_proj,
                 "_bounds": geometry_proj.bounds,
             }
@@ -719,8 +718,6 @@ class Br101ScMunicipioSilver2Gold(BaseETLJob):
                         "fatal_victims": float(metrics["fatal_victims"]),
                         "people_involved": float(metrics["people_involved"]),
                         "fatal_accident_count": int(metrics["fatal_accident_count"]),
-                        "level_observed": metrics["accident_count"] > 0,
-                        "canonical_policy": self.canonical_policy,
                     }
                 )
 
@@ -761,7 +758,7 @@ class Br101ScMunicipioSilver2Gold(BaseETLJob):
                         "fatal_accident_count": fatal_accident_count,
                         "fatal_victim_share": (
                             fatal_victims / people_involved
-                            if people_involved > 0
+                            if people_involved > 0 and math.isfinite(fatal_victims)
                             else None
                         ),
                         "fatal_accident_share": (
@@ -769,8 +766,6 @@ class Br101ScMunicipioSilver2Gold(BaseETLJob):
                             if accident_count > 0
                             else None
                         ),
-                        "level_observed": accident_count > 0,
-                        "canonical_policy": self.canonical_policy,
                     }
                 )
 
@@ -819,7 +814,6 @@ class Br101ScMunicipioSilver2Gold(BaseETLJob):
                 T.StructField("geometry_type", T.StringType(), True),
                 T.StructField("geometry_crs", T.StringType(), True),
                 T.StructField("geometry", T.StringType(), True),
-                T.StructField("data_ingestion", T.TimestampType(), True),
             ]
         )
 
@@ -886,8 +880,6 @@ class Br101ScMunicipioSilver2Gold(BaseETLJob):
                 T.StructField("fatal_victims", T.DoubleType(), True),
                 T.StructField("people_involved", T.DoubleType(), True),
                 T.StructField("fatal_accident_count", T.IntegerType(), True),
-                T.StructField("level_observed", T.BooleanType(), True),
-                T.StructField("canonical_policy", T.StringType(), True),
             ]
         )
 
@@ -909,8 +901,6 @@ class Br101ScMunicipioSilver2Gold(BaseETLJob):
                 T.StructField("fatal_accident_count", T.IntegerType(), True),
                 T.StructField("fatal_victim_share", T.DoubleType(), True),
                 T.StructField("fatal_accident_share", T.DoubleType(), True),
-                T.StructField("level_observed", T.BooleanType(), True),
-                T.StructField("canonical_policy", T.StringType(), True),
             ]
         )
 
