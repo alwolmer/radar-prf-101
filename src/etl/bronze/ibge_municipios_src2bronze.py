@@ -10,6 +10,7 @@ from pyspark.sql import functions as F
 from src.etl.base_job import BaseETLJob, build_spark_session
 from src.etl.bronze.ibge_utils import (
     download_and_extract_ibge_zip,
+    fix_shapefile_string_encoding,
     load_shapefile_as_dataframe,
     resolve_column_name,
 )
@@ -128,22 +129,22 @@ class IbgeMunicipiosSrc2Bronze(BaseETLJob):
             municipios_df.select(
                 # Core municipality identifiers
                 F.col(cd_mun_column).alias("codigo_municipio"),
-                F.col(nm_mun_column).alias("nome_municipio"),
+                fix_shapefile_string_encoding(nm_mun_column).alias("nome_municipio"),
                 F.col(sigla_uf_column).alias("sg_uf"),
                 F.col(cd_uf_column).alias("cd_uf"),
-                F.col(nm_uf_column).alias("nm_uf"),
+                fix_shapefile_string_encoding(nm_uf_column).alias("nm_uf"),
                 # RGI (Immediate Geographic Region)
                 F.col(cd_rgi_column).alias("cd_rgi"),
-                F.col(nm_rgi_column).alias("nm_rgi"),
+                fix_shapefile_string_encoding(nm_rgi_column).alias("nm_rgi"),
                 F.col(cd_rgint_column).alias("cd_rgint"),
-                F.col(nm_rgint_column).alias("nm_rgint"),
+                fix_shapefile_string_encoding(nm_rgint_column).alias("nm_rgint"),
                 # Geographic Region
                 F.col(cd_regia_column).alias("cd_regia"),
-                F.col(nm_regia_column).alias("nm_regia"),
+                fix_shapefile_string_encoding(nm_regia_column).alias("nm_regia"),
                 F.col(sigla_rg_column).alias("sigla_rg"),
                 # Concurrency
                 F.col(cd_concu_column).alias("cd_concu"),
-                F.col(nm_concu_column).alias("nm_concu"),
+                fix_shapefile_string_encoding(nm_concu_column).alias("nm_concu"),
                 # Geospatial
                 F.col(area_km2_column).alias("area_km2"),
                 F.col(geometry_column).alias("geometry"),

@@ -7,8 +7,8 @@ stages:
     deps:
     - path: pyproject.toml
       hash: md5
-      md5: 8698abdaddfa16017bc9f1043da0ad78
-      size: 1115
+      md5: 0a6dae5c2f02853c5f23e427a9ea5fbc
+      size: 1232
     - path: src/etl/base_job.py
       hash: md5
       md5: 233d499ba849554107619a04bb8351d4
@@ -23,12 +23,12 @@ stages:
       size: 10138
     - path: uv.lock
       hash: md5
-      md5: 4156b65eca258678cc7bb9837c2de17e
-      size: 417367
+      md5: 8b64ce3406abd8b1f5462525fb65d53e
+      size: 479021
     outs:
     - path: data/bronze/prf_accidents
       hash: md5
-      md5: aa8819a5cc537406534ce0c3619b5a8a.dir
+      md5: 0286df4bc0a392cc9d9438e048f02134.dir
       size: 65840828
       nfiles: 3981
   prf_bronze2silver:
@@ -38,13 +38,13 @@ stages:
     deps:
     - path: data/bronze/prf_accidents
       hash: md5
-      md5: aa8819a5cc537406534ce0c3619b5a8a.dir
+      md5: 0286df4bc0a392cc9d9438e048f02134.dir
       size: 65840828
       nfiles: 3981
     - path: pyproject.toml
       hash: md5
-      md5: 8698abdaddfa16017bc9f1043da0ad78
-      size: 1115
+      md5: 0a6dae5c2f02853c5f23e427a9ea5fbc
+      size: 1232
     - path: src/etl/base_job.py
       hash: md5
       md5: 233d499ba849554107619a04bb8351d4
@@ -59,12 +59,12 @@ stages:
       size: 9406
     - path: uv.lock
       hash: md5
-      md5: 4156b65eca258678cc7bb9837c2de17e
-      size: 417367
+      md5: 8b64ce3406abd8b1f5462525fb65d53e
+      size: 479021
     outs:
     - path: data/silver/prf_accidents_standardized
       hash: md5
-      md5: c6c514afcaf7e943d22927c98c74c3d6.dir
+      md5: 7e573a770c76cb1ff30c5e4ad1232e64.dir
       size: 4751396
       nfiles: 25
   dnit_source2bronze:
@@ -74,8 +74,8 @@ stages:
     deps:
     - path: pyproject.toml
       hash: md5
-      md5: 8698abdaddfa16017bc9f1043da0ad78
-      size: 1115
+      md5: 0a6dae5c2f02853c5f23e427a9ea5fbc
+      size: 1232
     - path: src/etl/base_job.py
       hash: md5
       md5: 233d499ba849554107619a04bb8351d4
@@ -90,12 +90,12 @@ stages:
       size: 10138
     - path: uv.lock
       hash: md5
-      md5: 4156b65eca258678cc7bb9837c2de17e
-      size: 417367
+      md5: 8b64ce3406abd8b1f5462525fb65d53e
+      size: 479021
     outs:
     - path: data/bronze/dnit_road_network
       hash: md5
-      md5: cc5384b01329d8416eadf3fb0974722f.dir
+      md5: 58a2915c80e10c4fdadec4824957ed9c.dir
       size: 13146848
       nfiles: 4
   dnit_bronze2silver:
@@ -105,13 +105,13 @@ stages:
     deps:
     - path: data/bronze/dnit_road_network
       hash: md5
-      md5: cc5384b01329d8416eadf3fb0974722f.dir
+      md5: 58a2915c80e10c4fdadec4824957ed9c.dir
       size: 13146848
       nfiles: 4
     - path: pyproject.toml
       hash: md5
-      md5: 8698abdaddfa16017bc9f1043da0ad78
-      size: 1115
+      md5: 0a6dae5c2f02853c5f23e427a9ea5fbc
+      size: 1232
     - path: src/etl/base_job.py
       hash: md5
       md5: 233d499ba849554107619a04bb8351d4
@@ -126,12 +126,12 @@ stages:
       size: 11803
     - path: uv.lock
       hash: md5
-      md5: 4156b65eca258678cc7bb9837c2de17e
-      size: 417367
+      md5: 8b64ce3406abd8b1f5462525fb65d53e
+      size: 479021
     outs:
     - path: data/silver/dnit_br101_corridor
       hash: md5
-      md5: 72db5249fefdb8b49e14ce0ec30f9887.dir
+      md5: 355e2f4653362b61f83c8b63fcc79a6d.dir
       size: 67287657
       nfiles: 14
   ibge_municipios_src2bronze:
@@ -141,8 +141,8 @@ stages:
     deps:
     - path: pyproject.toml
       hash: md5
-      md5: 8698abdaddfa16017bc9f1043da0ad78
-      size: 1115
+      md5: 0a6dae5c2f02853c5f23e427a9ea5fbc
+      size: 1232
     - path: src/etl/base_job.py
       hash: md5
       md5: 233d499ba849554107619a04bb8351d4
@@ -161,12 +161,12 @@ stages:
       size: 10138
     - path: uv.lock
       hash: md5
-      md5: 4156b65eca258678cc7bb9837c2de17e
-      size: 417367
+      md5: 8b64ce3406abd8b1f5462525fb65d53e
+      size: 479021
     outs:
     - path: data/bronze/ibge/municipios
       hash: md5
-      md5: 6b770aa2b4a6217970570cc081fb37b0.dir
+      md5: 63917342e50b1cb403242485dc79d556.dir
       size: 284903732
       nfiles: 28
   ibge_rgi_src2bronze:
@@ -176,8 +176,8 @@ stages:
     deps:
     - path: pyproject.toml
       hash: md5
-      md5: 8698abdaddfa16017bc9f1043da0ad78
-      size: 1115
+      md5: 0a6dae5c2f02853c5f23e427a9ea5fbc
+      size: 1232
     - path: src/etl/base_job.py
       hash: md5
       md5: 233d499ba849554107619a04bb8351d4
@@ -196,12 +196,12 @@ stages:
       size: 10138
     - path: uv.lock
       hash: md5
-      md5: 4156b65eca258678cc7bb9837c2de17e
-      size: 417367
+      md5: 8b64ce3406abd8b1f5462525fb65d53e
+      size: 479021
     outs:
     - path: data/bronze/ibge/rgi
       hash: md5
-      md5: b55707f11bc166c94f5ce20beb494c25.dir
+      md5: 52f04d04422e8af4a94085fe84708033.dir
       size: 100004625
       nfiles: 28
   ibge_bronze2silver:
@@ -211,18 +211,18 @@ stages:
     deps:
     - path: data/bronze/ibge/municipios
       hash: md5
-      md5: 6b770aa2b4a6217970570cc081fb37b0.dir
+      md5: 63917342e50b1cb403242485dc79d556.dir
       size: 284903732
       nfiles: 28
     - path: data/bronze/ibge/rgi
       hash: md5
-      md5: b55707f11bc166c94f5ce20beb494c25.dir
+      md5: 52f04d04422e8af4a94085fe84708033.dir
       size: 100004625
       nfiles: 28
     - path: pyproject.toml
       hash: md5
-      md5: 8698abdaddfa16017bc9f1043da0ad78
-      size: 1115
+      md5: 0a6dae5c2f02853c5f23e427a9ea5fbc
+      size: 1232
     - path: src/etl/base_job.py
       hash: md5
       md5: 233d499ba849554107619a04bb8351d4
@@ -237,12 +237,12 @@ stages:
       size: 12115
     - path: uv.lock
       hash: md5
-      md5: 4156b65eca258678cc7bb9837c2de17e
-      size: 417367
+      md5: 8b64ce3406abd8b1f5462525fb65d53e
+      size: 479021
     outs:
     - path: data/silver/ibge_territorial_preprocessed
       hash: md5
-      md5: 38e1ad0f8e28fd606be9ec98830e4d13.dir
+      md5: 8c53d4c92135ef3872e0df874daca2ad.dir
       size: 388689539
       nfiles: 56
   br101_rgi_weekly_panel_silver2gold:
@@ -252,23 +252,23 @@ stages:
     deps:
     - path: data/silver/dnit_br101_corridor
       hash: md5
-      md5: 72db5249fefdb8b49e14ce0ec30f9887.dir
+      md5: 355e2f4653362b61f83c8b63fcc79a6d.dir
       size: 67287657
       nfiles: 14
     - path: data/silver/ibge_territorial_preprocessed/rgis_preprocessed
       hash: md5
-      md5: 6b9d376ea4e74b47fb425db8813f79bc.dir
+      md5: 411d47d67115de1f596c99822b456f30.dir
       size: 101428190
       nfiles: 28
     - path: data/silver/prf_accidents_standardized
       hash: md5
-      md5: c6c514afcaf7e943d22927c98c74c3d6.dir
+      md5: 7e573a770c76cb1ff30c5e4ad1232e64.dir
       size: 4751396
       nfiles: 25
     - path: pyproject.toml
       hash: md5
-      md5: 8698abdaddfa16017bc9f1043da0ad78
-      size: 1115
+      md5: 0a6dae5c2f02853c5f23e427a9ea5fbc
+      size: 1232
     - path: src/etl/base_job.py
       hash: md5
       md5: 233d499ba849554107619a04bb8351d4
@@ -279,19 +279,19 @@ stages:
       size: 10138
     - path: src/etl/gold/__init__.py
       hash: md5
-      md5: 5d0b5308f663ec646d3e3493faa8dc50
-      size: 28
+      md5: 21ca46f1cfbc41c2ac0b82b7d3894f1d
+      size: 27
     - path: src/etl/gold/br101_rgi_weekly_panel_silver2gold.py
       hash: md5
-      md5: 9de64fbe0af2c9c3f7ae90f61de1ff76
-      size: 43454
+      md5: 27e181230e0cfafc2001954077ba71c9
+      size: 43748
     - path: uv.lock
       hash: md5
-      md5: 4156b65eca258678cc7bb9837c2de17e
-      size: 417367
+      md5: 8b64ce3406abd8b1f5462525fb65d53e
+      size: 479021
     outs:
     - path: data/gold/br101_rgi_weekly_panel
       hash: md5
-      md5: 677eabcc2eece73f00e02dafebd490ce.dir
+      md5: 40e1b0c3c894c1acd85cb611a7e6b2bf.dir
       size: 22736086
       nfiles: 150
