@@ -36,6 +36,20 @@ services:
     volumes:
       - mlflow-data:/mlflow
 
+  viz:
+    build:
+      context: .
+      dockerfile: docker/viz/Dockerfile
+    image: alwolmer/radar-prf-101-viz:latest
+    container_name: radar_prf_101_viz
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app
+    environment:
+      VIZ_PANEL_PATH: /app/data/gold/br101_sc_municipio_panel
+    working_dir: /app
+
 volumes:
   uv-cache:
   mlflow-data:

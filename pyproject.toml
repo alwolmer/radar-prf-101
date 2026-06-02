@@ -42,6 +42,15 @@ dev = [
     "pytest>=9.0.2",
     "ruff>=0.15.4",
 ]
+viz = [
+    "branca>=0.8,<1",
+    "folium>=0.20,<1",
+    "pandas>=2.0,<3",
+    "pyarrow>=20,<24",
+    "shapely>=2.0,<3",
+    "streamlit>=1.45,<2",
+    "streamlit-folium>=0.25,<1",
+]
 
 [tool.uv]
 
