@@ -1,0 +1,41 @@
+# MLflow server URI.
+# Env override: MLFLOW_TRACKING_URI
+tracking_uri: http://mlflow:5000
+
+# Experiment namespace visible in the MLflow UI.
+# Env override: MLFLOW_EXPERIMENT_NAME
+experiment_name: radar-prf-101-municipio-day-ridge
+
+# Optional explicit MLflow run name. When omitted, the code generates a
+# parseable name like:
+# municipio_day__model=shared_minirocket_per_mun_ridge__alpha_select=validation__kernels=10000__seed=101
+# Env override: MLFLOW_RUN_NAME
+# run_name: municipio_day__model=shared_minirocket_per_mun_ridge__alpha_select=validation__kernels=10000__seed=101
+
+# Where model artifacts and evaluation outputs are persisted.
+# Env override: ML_MUNICIPIO_DAY_EXPERIMENT_OUTPUT_SUBPATH
+output_subpath: gold/ml/municipio_day_regression
+
+# Reads the enriched panel produced by the featurize phase.
+# Env override: ML_MUNICIPIO_DAY_FEATURE_INPUT_SUBPATH
+feature_input_subpath: gold/ml/municipio_day_features
+
+# MiniRocketMultivariate settings.
+n_kernels: 10000
+random_seed: 101
+
+# Out-of-time split used to select Ridge alpha per municipio.
+# Env override: ML_MUNICIPIO_DAY_ALPHA_SELECTION_SPLIT
+alpha_selection_split: validation
+
+# Alpha candidates for per-municipio Ridge. The selected alpha minimizes MSE on
+# alpha_selection_split, avoiding LOOCV over highly overlapping daily windows.
+ridge_alphas:
+  - 10.0
+  - 30.0
+  - 100.0
+  - 300.0
+  - 1000.0
+  - 3000.0
+  - 10000.0
+  - 30000.0

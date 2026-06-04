@@ -6,7 +6,7 @@ DVC_ENV = DVC_SITE_CACHE_DIR=/tmp/dvc UV_CACHE_DIR=/tmp/uv-cache
 LOCAL_DATALAKE_ENV = DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=/app/data
 ML_ENV = DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=/app/data MLFLOW_TRACKING_URI=http://mlflow:5000
 
-.PHONY: docker-build docker-pull docker-publish docker-up docker-ensure-running mlflow-build mlflow-pull mlflow-publish mlflow-up mlflow-ensure-running install lint linter test pre-commit-install pre-commit-install-local pre-commit-run dvc-status dvc-checkout dvc-repro dvc-repro-bronze dvc-repro-silver dvc-repro-gold bronze silver gold prf-source2bronze dnit-source2bronze ibge-municipios-source2bronze ibge-rgi-source2bronze prf-bronze2silver dnit-bronze2silver ibge-bronze2silver br101-sc-municipio-silver2gold activity-group-featurize activity-group-train
+.PHONY: docker-build docker-pull docker-publish docker-up docker-ensure-running mlflow-build mlflow-pull mlflow-publish mlflow-up mlflow-ensure-running install lint linter test pre-commit-install pre-commit-install-local pre-commit-run dvc-status dvc-checkout dvc-repro dvc-repro-bronze dvc-repro-silver dvc-repro-gold bronze silver gold prf-source2bronze dnit-source2bronze ibge-municipios-source2bronze ibge-rgi-source2bronze prf-bronze2silver dnit-bronze2silver ibge-bronze2silver br101-sc-municipio-silver2gold openmeteo-json2gold openmeteo-api2gold activity-group-featurize activity-group-train municipio-day-featurize municipio-day-featurize-weather municipio-day-featurize-no-weather municipio-day-train municipio-day-train-weather municipio-day-train-no-weather
 
 docker-build:
 	$(DOCKER_COMPOSE) build $(SERVICE)
@@ -118,8 +118,32 @@ ibge-bronze2silver: docker-ensure-running
 br101-sc-municipio-silver2gold: docker-ensure-running
 	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.etl.gold.br101_sc_municipio_silver2gold
 
+openmeteo-json2gold: docker-ensure-running
+	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.etl.silver.openmeteo_src2gold --source-json-dir data/bronze/openmeteo-weather
+
+openmeteo-api2gold: docker-ensure-running
+	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.etl.silver.openmeteo_src2gold --start-date-from-existing-max --end-date-today
+
 activity-group-featurize: docker-ensure-running
 	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.ml.activity_group_regression featurize
 
 activity-group-train: docker-ensure-running mlflow-ensure-running
 	$(DOCKER_EXEC) env $(ML_ENV) python -m src.ml.activity_group_regression train
+
+municipio-day-featurize: docker-ensure-running
+	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.ml.municipio_day_regression featurize
+
+municipio-day-featurize-weather: docker-ensure-running
+	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) ML_MUNICIPIO_DAY_INCLUDE_WEATHER_FEATURES=true ML_MUNICIPIO_DAY_FEATURE_OUTPUT_SUBPATH=gold/ml/municipio_day_features_weather python -m src.ml.municipio_day_regression featurize
+
+municipio-day-featurize-no-weather: docker-ensure-running
+	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) ML_MUNICIPIO_DAY_INCLUDE_WEATHER_FEATURES=false ML_MUNICIPIO_DAY_FEATURE_OUTPUT_SUBPATH=gold/ml/municipio_day_features_no_weather python -m src.ml.municipio_day_regression featurize
+
+municipio-day-train: docker-ensure-running mlflow-ensure-running
+	$(DOCKER_EXEC) env $(ML_ENV) python -m src.ml.municipio_day_regression train
+
+municipio-day-train-weather: docker-ensure-running mlflow-ensure-running
+	$(DOCKER_EXEC) env $(ML_ENV) ML_MUNICIPIO_DAY_FEATURE_INPUT_SUBPATH=gold/ml/municipio_day_features_weather ML_MUNICIPIO_DAY_EXPERIMENT_OUTPUT_SUBPATH=gold/ml/municipio_day_regression_weather MLFLOW_RUN_NAME=municipio_day__variant=with_weather python -m src.ml.municipio_day_regression train
+
+municipio-day-train-no-weather: docker-ensure-running mlflow-ensure-running
+	$(DOCKER_EXEC) env $(ML_ENV) ML_MUNICIPIO_DAY_FEATURE_INPUT_SUBPATH=gold/ml/municipio_day_features_no_weather ML_MUNICIPIO_DAY_EXPERIMENT_OUTPUT_SUBPATH=gold/ml/municipio_day_regression_no_weather MLFLOW_RUN_NAME=municipio_day__variant=no_weather python -m src.ml.municipio_day_regression train

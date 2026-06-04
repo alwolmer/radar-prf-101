@@ -1,0 +1,42 @@
+# Gold panel produced by br101_sc_municipio_silver2gold.
+# Env override: ML_MUNICIPIO_DAY_FEATURE_INPUT_SUBPATH
+gold_input_subpath: gold/br101_sc_municipio_panel
+
+# Include daily weather channels in the feature panel and sequence registry.
+# Disable this to train the fallback model that does not depend on Open-Meteo.
+# Env override: ML_MUNICIPIO_DAY_INCLUDE_WEATHER_FEATURES
+include_weather_features: true
+
+# Daily weather features produced by openmeteo_src2gold under gold_input_subpath.
+# Env override: ML_MUNICIPIO_DAY_WEATHER_INPUT_SUBPATH
+weather_input_subpath: daily_weather
+
+# Where the featurization run persists the enriched panel and feature registry.
+# Env override: ML_MUNICIPIO_DAY_FEATURE_OUTPUT_SUBPATH
+output_subpath: gold/ml/municipio_day_features
+
+# Number of days before the target date used as the lookback sequence window.
+# 90 days captures ~13 weekly cycles; annual seasonality is supplied explicitly
+# via sin/cos channels, so a full-year window is not needed.
+# Env override: ML_MUNICIPIO_DAY_LOOKBACK_DAYS
+lookback_days: 90
+
+# Country and state for the `holidays` library when deriving non-working-day
+# features.  State-level holidays (SC) are included on top of national ones.
+holiday_country: BR
+holiday_state: SC
+
+# Maximum number of days to scan forward/backward when computing days_off_ahead
+# and days_off_before.  Covers the longest contiguous holiday+bridge stretches
+# observed in the Brazilian calendar.
+holiday_max_lookahead: 30
+
+# Time-split boundaries used to assign each (municipio, date) sample to a split.
+# The split assignment is stored in the enriched panel so the train phase can
+# load a single parquet and filter without knowing these values again.
+train_start_year: 2017
+train_end_year: 2023
+validation_start_year: 2024
+validation_end_year: 2024
+test_start_year: 2025
+test_end_year: 2025
