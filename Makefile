@@ -1,12 +1,13 @@
 DOCKER_COMPOSE ?= docker compose
 SERVICE ?= spark-env
 MLFLOW_SERVICE ?= mlflow
+VIZ_SERVICE ?= viz
 DOCKER_EXEC = $(DOCKER_COMPOSE) exec -T $(SERVICE)
 DVC_ENV = DVC_SITE_CACHE_DIR=/tmp/dvc UV_CACHE_DIR=/tmp/uv-cache
 LOCAL_DATALAKE_ENV = DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=/app/data
 ML_ENV = DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=/app/data MLFLOW_TRACKING_URI=http://mlflow:5000
 
-.PHONY: docker-build docker-pull docker-publish docker-up docker-ensure-running mlflow-build mlflow-pull mlflow-publish mlflow-up mlflow-ensure-running install lint linter test pre-commit-install pre-commit-install-local pre-commit-run dvc-status dvc-checkout dvc-repro dvc-repro-bronze dvc-repro-silver dvc-repro-gold bronze silver gold prf-source2bronze dnit-source2bronze ibge-municipios-source2bronze ibge-rgi-source2bronze prf-bronze2silver dnit-bronze2silver ibge-bronze2silver br101-sc-municipio-silver2gold openmeteo-json2gold openmeteo-api2gold activity-group-featurize activity-group-train municipio-day-featurize municipio-day-featurize-weather municipio-day-featurize-no-weather municipio-day-train municipio-day-train-weather municipio-day-train-no-weather
+.PHONY: docker-build docker-pull docker-publish docker-up docker-ensure-running mlflow-build mlflow-pull mlflow-publish mlflow-up mlflow-ensure-running viz viz-build viz-up viz-logs install lint linter test pre-commit-install pre-commit-install-local pre-commit-run dvc-status dvc-checkout dvc-repro dvc-repro-bronze dvc-repro-silver dvc-repro-gold bronze silver gold prf-source2bronze dnit-source2bronze ibge-municipios-source2bronze ibge-rgi-source2bronze prf-bronze2silver dnit-bronze2silver ibge-bronze2silver br101-sc-municipio-silver2gold openmeteo-json2gold openmeteo-api2gold activity-group-featurize activity-group-train municipio-day-featurize municipio-day-featurize-weather municipio-day-featurize-no-weather municipio-day-train municipio-day-train-weather municipio-day-train-no-weather
 
 docker-build:
 	$(DOCKER_COMPOSE) build $(SERVICE)
@@ -31,6 +32,17 @@ mlflow-publish: mlflow-build
 
 mlflow-up: mlflow-pull
 	$(DOCKER_COMPOSE) up -d $(MLFLOW_SERVICE)
+
+viz: viz-up
+
+viz-build:
+	$(DOCKER_COMPOSE) build $(VIZ_SERVICE)
+
+viz-up:
+	$(DOCKER_COMPOSE) up -d --build $(VIZ_SERVICE)
+
+viz-logs:
+	$(DOCKER_COMPOSE) logs -f $(VIZ_SERVICE)
 
 docker-ensure-running:
 	@running_container="$$( $(DOCKER_COMPOSE) ps --status running -q $(SERVICE) )"; \

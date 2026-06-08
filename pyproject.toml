@@ -49,6 +49,7 @@ viz = [
     "branca>=0.8,<1",
     "folium>=0.20,<1",
     "pandas>=2.0,<3",
+    "plotly>=6.1,<7",
     "pyarrow>=20,<24",
     "shapely>=2.0,<3",
     "streamlit>=1.45,<2",
