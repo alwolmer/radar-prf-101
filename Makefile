@@ -2,12 +2,13 @@ DOCKER_COMPOSE ?= docker compose
 SERVICE ?= spark-env
 MLFLOW_SERVICE ?= mlflow
 VIZ_SERVICE ?= viz
+API_SERVICE ?= api
 DOCKER_EXEC = $(DOCKER_COMPOSE) exec -T $(SERVICE)
 DVC_ENV = DVC_SITE_CACHE_DIR=/tmp/dvc UV_CACHE_DIR=/tmp/uv-cache
 LOCAL_DATALAKE_ENV = DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=/app/data
 ML_ENV = DATALAKE_BACKEND=local DATALAKE_LOCAL_ROOT=/app/data MLFLOW_TRACKING_URI=http://mlflow:5000
 
-.PHONY: docker-build docker-pull docker-publish docker-up docker-ensure-running mlflow-build mlflow-pull mlflow-publish mlflow-up mlflow-ensure-running viz viz-build viz-up viz-logs install lint linter test pre-commit-install pre-commit-install-local pre-commit-run dvc-status dvc-checkout dvc-repro dvc-repro-bronze dvc-repro-silver dvc-repro-gold bronze silver gold prf-source2bronze dnit-source2bronze ibge-municipios-source2bronze ibge-rgi-source2bronze prf-bronze2silver dnit-bronze2silver ibge-bronze2silver br101-sc-municipio-silver2gold openmeteo-json2gold openmeteo-api2gold activity-group-featurize activity-group-train municipio-day-featurize municipio-day-featurize-weather municipio-day-featurize-no-weather municipio-day-train municipio-day-train-weather municipio-day-train-no-weather
+.PHONY: docker-build docker-pull docker-publish docker-up docker-ensure-running mlflow-build mlflow-pull mlflow-publish mlflow-up mlflow-ensure-running api api-build api-up api-logs viz viz-build viz-up viz-logs install lint linter test pre-commit-install pre-commit-install-local pre-commit-run dvc-status dvc-checkout dvc-repro dvc-repro-bronze dvc-repro-silver dvc-repro-gold bronze silver gold prf-source2bronze dnit-source2bronze ibge-municipios-source2bronze ibge-rgi-source2bronze prf-bronze2silver dnit-bronze2silver ibge-bronze2silver br101-sc-municipio-silver2gold openmeteo-json2gold openmeteo-api2gold activity-group-featurize activity-group-train municipio-day-featurize municipio-day-featurize-weather municipio-day-featurize-no-weather municipio-day-train municipio-day-train-weather municipio-day-train-no-weather municipio-day-predict municipio-day-full-forecast
 
 docker-build:
 	$(DOCKER_COMPOSE) build $(SERVICE)
@@ -43,6 +44,17 @@ viz-up:
 
 viz-logs:
 	$(DOCKER_COMPOSE) logs -f $(VIZ_SERVICE)
+
+api: api-up
+
+api-build:
+	$(DOCKER_COMPOSE) build $(API_SERVICE)
+
+api-up:
+	$(DOCKER_COMPOSE) up -d --build $(API_SERVICE)
+
+api-logs:
+	$(DOCKER_COMPOSE) logs -f $(API_SERVICE)
 
 docker-ensure-running:
 	@running_container="$$( $(DOCKER_COMPOSE) ps --status running -q $(SERVICE) )"; \
@@ -131,10 +143,10 @@ br101-sc-municipio-silver2gold: docker-ensure-running
 	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.etl.gold.br101_sc_municipio_silver2gold
 
 openmeteo-json2gold: docker-ensure-running
-	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.etl.silver.openmeteo_src2gold --source-json-dir data/bronze/openmeteo-weather
+	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.etl.gold.openmeteo_src2gold --source-json-dir data/bronze/openmeteo-weather
 
 openmeteo-api2gold: docker-ensure-running
-	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.etl.silver.openmeteo_src2gold --start-date-from-existing-max --end-date-today
+	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.etl.gold.openmeteo_src2gold --start-date-from-existing-max --end-date-today
 
 activity-group-featurize: docker-ensure-running
 	$(DOCKER_EXEC) env $(LOCAL_DATALAKE_ENV) python -m src.ml.activity_group_regression featurize
@@ -159,3 +171,8 @@ municipio-day-train-weather: docker-ensure-running mlflow-ensure-running
 
 municipio-day-train-no-weather: docker-ensure-running mlflow-ensure-running
 	$(DOCKER_EXEC) env $(ML_ENV) ML_MUNICIPIO_DAY_FEATURE_INPUT_SUBPATH=gold/ml/municipio_day_features_no_weather ML_MUNICIPIO_DAY_EXPERIMENT_OUTPUT_SUBPATH=gold/ml/municipio_day_regression_no_weather MLFLOW_RUN_NAME=municipio_day__variant=no_weather python -m src.ml.municipio_day_regression train
+
+municipio-day-predict: docker-ensure-running mlflow-ensure-running
+	$(DOCKER_EXEC) env $(ML_ENV) ML_MUNICIPIO_DAY_MODEL_URI=models:/radar-prf-101-municipio-day@champion ML_MUNICIPIO_DAY_FORECAST_OUTPUT_SUBPATH=gold/ml/municipio_day_forecast python -m src.ml.municipio_day_regression predict
+
+municipio-day-full-forecast: municipio-day-featurize municipio-day-train municipio-day-predict

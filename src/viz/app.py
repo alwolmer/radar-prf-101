@@ -9,9 +9,12 @@ from src.viz.data import (
     as_geojson,
     build_municipio_features,
     load_bounds,
+    load_forecast_manifest,
     load_panel,
     panel_root,
     period_options,
+    period_source_label,
+    period_source_options,
     rows_for_period,
 )
 from src.viz.formatting import (
@@ -110,6 +113,18 @@ def previous_period(periods: list, selected_period):
     return periods[selected_index - 1]
 
 
+def filter_periods_by_source(
+    periods: list, source_by_period: dict, source_filter: str
+) -> list:
+    if source_filter == "Todos":
+        return periods
+    return [
+        period
+        for period in periods
+        if source_by_period.get(period, "-") == source_filter
+    ]
+
+
 def entity_options(panel: pd.DataFrame, entity_column: str) -> list[str]:
     return sorted(panel[entity_column].fillna("Sem região").astype(str).unique())
 
@@ -161,15 +176,34 @@ def main() -> None:
             st.error("Nenhum período disponível no painel gold.")
             st.stop()
 
-        selected_period = st.select_slider(
-            "Período",
-            options=periods,
-            value=periods[-1],
-            format_func=lambda value: (
+        source_by_period = period_source_options(panel, granularity, periods)
+        source_filter = st.radio(
+            "Tipo de período",
+            options=["Todos", "Histórico", "Previsão", "Misto"],
+            horizontal=True,
+        )
+        selectable_periods = filter_periods_by_source(
+            periods,
+            source_by_period,
+            source_filter,
+        )
+        if not selectable_periods:
+            st.warning("Nenhum período disponível para o tipo selecionado.")
+            st.stop()
+
+        def format_period_option(value) -> str:
+            date_label = (
                 f"Semana de {format_date_pt_br(value)}"
                 if granularity == "semana"
                 else format_date_pt_br(value)
-            ),
+            )
+            return f"{date_label} | {source_by_period.get(value, '-')}"
+
+        selected_period = st.selectbox(
+            "Período",
+            options=selectable_periods,
+            index=len(selectable_periods) - 1,
+            format_func=format_period_option,
         )
 
         available_metrics = metric_options(panel)
@@ -209,9 +243,19 @@ def main() -> None:
         )
 
         st.divider()
+        manifest = load_forecast_manifest()
+        if manifest:
+            st.caption(
+                "Previsão: "
+                f"{manifest.get('model_variant', '-')}; "
+                f"gerada em {manifest.get('generated_at', '-')}; "
+                f"base até {manifest.get('source_panel_max_date', '-')}; "
+                f"horizonte {manifest.get('horizon_days', '-')} dias."
+            )
         st.caption(f"Fonte de dados: `{root}`")
 
     period_rows = rows_for_period(panel, granularity, selected_period)
+    selected_source = period_source_label(period_rows)
     metric_label = METRICS[metric]["label"]
     date_column = PANEL_TABLES[granularity]["date_column"]
     period_text = period_label(granularity, selected_period, period_rows)
@@ -239,7 +283,12 @@ def main() -> None:
     )
     top_mid.metric("Municípios com acidente", format_number_pt_br(active_municipios))
     top_right.metric("Período", period_text)
-    top_fourth.metric("Maior valor", destaque)
+    top_fourth.metric("Fonte", selected_source)
+    if selected_source == "Previsão":
+        st.info("Período previsto: valores estimados pelo modelo champion no MLflow.")
+    elif selected_source == "Misto":
+        st.warning("Período misto: combina dados históricos e previsões.")
+    st.caption(f"Maior valor no período: {destaque}")
 
     m = base_map(center, bounds)
     add_choropleth(m, geojson, metric=metric, metric_label=metric_label)
@@ -273,7 +322,14 @@ def main() -> None:
                 "fonte": "Fonte",
             }
         )
-        st.dataframe(table, use_container_width=True, hide_index=True)
+        styled_table = table.style.apply(
+            lambda row: [
+                "background-color: #fff7ed" if row.get("Fonte") == "previsão" else ""
+                for _ in row
+            ],
+            axis=1,
+        )
+        st.dataframe(styled_table, use_container_width=True, hide_index=True)
 
         st.caption(
             "Quando previsões forem materializadas, o app anexa períodos futuros "

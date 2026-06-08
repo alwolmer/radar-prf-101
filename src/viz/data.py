@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 from typing import Literal
+from urllib import request
 
 import pandas as pd
 import streamlit as st
@@ -32,6 +33,7 @@ OPTIONAL_FORECAST_PATHS = (
     PROJECT_ROOT / "data" / "gold" / "ml" / "municipio_day_forecast",
     PROJECT_ROOT / "data" / "gold" / "ml" / "municipio_day_predictions",
 )
+FORECAST_HORIZON_DAYS = 30
 
 
 def panel_root() -> Path:
@@ -47,6 +49,71 @@ def forecast_path() -> Path | None:
         if candidate.exists():
             return candidate
     return None
+
+
+def _read_forecast_manifest() -> dict | None:
+    path = forecast_path()
+    if path is None or not path.is_dir():
+        return None
+    manifest_path = path / "forecast_manifest.json"
+    if not manifest_path.exists():
+        return None
+    try:
+        return json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+
+def forecast_is_current(historical_max_date, historical_period_start_date=None) -> bool:
+    path = forecast_path()
+    if path is None:
+        return False
+    manifest = _read_forecast_manifest()
+    if manifest is None:
+        return False
+
+    source_cutoff = manifest.get("source_panel_max_date")
+    if source_cutoff is None:
+        return False
+    source_cutoff_date = pd.to_datetime(source_cutoff).date()
+    if historical_period_start_date is not None:
+        if (
+            not historical_period_start_date
+            <= source_cutoff_date
+            <= historical_max_date
+        ):
+            return False
+    elif source_cutoff_date != historical_max_date:
+        return False
+    return int(manifest.get("horizon_days", 0)) == FORECAST_HORIZON_DAYS
+
+
+def ensure_forecast_available(historical_max_date) -> None:
+    api_url = os.environ.get("VIZ_API_URL")
+    if not api_url or forecast_is_current(historical_max_date):
+        return
+    state_key = f"municipio_day_forecast_ensure_requested_{historical_max_date}"
+    if st.session_state.get(state_key):
+        return
+    st.session_state[state_key] = True
+
+    endpoint = f"{api_url.rstrip('/')}/forecast/ensure"
+    payload = json.dumps({"force": False, "wait": False}).encode("utf-8")
+    req = request.Request(
+        endpoint,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        request.urlopen(req, timeout=5).read()
+    except Exception:
+        return
+
+
+@st.cache_data(show_spinner=False)
+def load_forecast_manifest() -> dict | None:
+    return _read_forecast_manifest()
 
 
 @st.cache_data(show_spinner="Carregando municípios em escopo...")
@@ -113,8 +180,8 @@ def load_bounds(panel_path: str) -> tuple[list[float], list[list[float]]]:
     return center, bounds
 
 
-@st.cache_data(show_spinner="Carregando painel de acidentes...")
-def load_panel(panel_path: str, granularity: Granularity) -> pd.DataFrame:
+@st.cache_data(show_spinner="Carregando painel histórico de acidentes...")
+def load_historical_panel(panel_path: str, granularity: Granularity) -> pd.DataFrame:
     config = PANEL_TABLES[granularity]
     table_path = Path(panel_path) / config["table"]
     if not table_path.exists():
@@ -128,7 +195,23 @@ def load_panel(panel_path: str, granularity: Granularity) -> pd.DataFrame:
         panel[end_column] = pd.to_datetime(panel[end_column]).dt.date
 
     panel["fonte"] = "histórico"
-    forecast = load_forecast(granularity)
+    return panel
+
+
+def load_panel(panel_path: str, granularity: Granularity) -> pd.DataFrame:
+    config = PANEL_TABLES[granularity]
+    panel = load_historical_panel(panel_path, granularity).copy()
+    cutoff_column = config["end_column"] or config["date_column"]
+    historical_max_date = panel[cutoff_column].max()
+    historical_period_start_date = (
+        panel[config["date_column"]].max() if config["end_column"] else None
+    )
+    forecast_current = forecast_is_current(
+        historical_max_date,
+        historical_period_start_date,
+    )
+    ensure_forecast_available(historical_max_date)
+    forecast = load_forecast(granularity) if forecast_current else None
     if forecast is not None and not forecast.empty:
         panel = merge_forecast(panel, forecast, granularity)
 
@@ -141,7 +224,12 @@ def load_forecast(granularity: Granularity) -> pd.DataFrame | None:
         return None
 
     if path.is_dir():
-        forecast = pd.read_parquet(path)
+        forecast_file = path / "forecast.parquet"
+        forecast = (
+            pd.read_parquet(forecast_file)
+            if forecast_file.exists()
+            else pd.read_parquet(path)
+        )
     elif path.suffix.lower() in {".parquet", ".pq"}:
         forecast = pd.read_parquet(path)
     elif path.suffix.lower() == ".csv":
@@ -162,7 +250,14 @@ def normalize_forecast(
 
     prepared = forecast.copy()
     date_column = PANEL_TABLES[granularity]["date_column"]
-    candidate_date_columns = [date_column, "date", "data", "prediction_date", "ds"]
+    candidate_date_columns = [
+        date_column,
+        "accident_date",
+        "date",
+        "data",
+        "prediction_date",
+        "ds",
+    ]
     candidate_value_columns = [
         "accident_count",
         "predicted_accident_count",
@@ -184,10 +279,30 @@ def normalize_forecast(
     ):
         return pd.DataFrame()
 
-    prepared[date_column] = pd.to_datetime(prepared[source_date]).dt.date
     prepared["codigo_municipio"] = prepared["codigo_municipio"].astype(str)
     prepared["accident_count"] = pd.to_numeric(prepared[source_value], errors="coerce")
     prepared["fonte"] = "previsão"
+
+    source_dates = pd.to_datetime(prepared[source_date], errors="coerce")
+    if granularity == "semana":
+        prepared[date_column] = (
+            source_dates - pd.to_timedelta(source_dates.dt.weekday, unit="D")
+        ).dt.date
+        prepared["week_end"] = (
+            pd.to_datetime(prepared[date_column]) + pd.Timedelta(days=6)
+        ).dt.date
+
+        group_columns = ["codigo_municipio", date_column, "week_end", "fonte"]
+        for optional in ("nome_municipio",):
+            if optional in prepared.columns:
+                group_columns.append(optional)
+        return (
+            prepared.dropna(subset=[date_column, "accident_count"])
+            .groupby(group_columns, as_index=False, dropna=False)["accident_count"]
+            .sum()
+        )
+
+    prepared[date_column] = source_dates.dt.date
 
     keep_columns = ["codigo_municipio", date_column, "accident_count", "fonte"]
     for optional in ("nome_municipio", "week_end"):
@@ -231,6 +346,28 @@ def merge_forecast(
 def period_options(panel: pd.DataFrame, granularity: Granularity) -> list:
     date_column = PANEL_TABLES[granularity]["date_column"]
     return sorted(panel[date_column].dropna().unique().tolist())
+
+
+def period_source_label(rows: pd.DataFrame) -> str:
+    sources = set(rows.get("fonte", pd.Series(dtype=str)).dropna().astype(str))
+    if not sources:
+        return "-"
+    if sources == {"histórico"}:
+        return "Histórico"
+    if sources == {"previsão"}:
+        return "Previsão"
+    return "Misto"
+
+
+def period_source_options(
+    panel: pd.DataFrame,
+    granularity: Granularity,
+    periods: list,
+) -> dict:
+    return {
+        period: period_source_label(rows_for_period(panel, granularity, period))
+        for period in periods
+    }
 
 
 def rows_for_period(

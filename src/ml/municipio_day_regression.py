@@ -26,11 +26,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import math
 import os
 import tempfile
 from dataclasses import asdict, dataclass, field
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,7 @@ from src.etl.datalake import DatalakeAdapter
 from src.ml.base import (
     BaseFeaturizationRun,
     BaseMLflowRegressionExperiment,
+    _configure_logging,
     _import_mlflow,
 )
 
@@ -93,7 +95,10 @@ DEFAULT_GOLD_INPUT_SUBPATH = "gold/br101_sc_municipio_panel"
 DEFAULT_FEATURE_OUTPUT_SUBPATH = "gold/ml/municipio_day_features"
 DEFAULT_FEATURE_INPUT_SUBPATH = "gold/ml/municipio_day_features"
 DEFAULT_EXPERIMENT_OUTPUT_SUBPATH = "gold/ml/municipio_day_regression"
+DEFAULT_FORECAST_OUTPUT_SUBPATH = "gold/ml/municipio_day_forecast"
 DEFAULT_EXPERIMENT_NAME = "radar-prf-101-municipio-day-ridge"
+DEFAULT_REGISTERED_MODEL_NAME = "radar-prf-101-municipio-day"
+DEFAULT_CHAMPION_ALIAS = "champion"
 DEFAULT_WEATHER_INPUT_SUBPATH = "daily_weather"
 WEATHER_FEATURE_COLUMNS = [
     "target_max_temp_c",
@@ -104,6 +109,83 @@ WEATHER_FEATURE_COLUMNS = [
     "target_precipitation_mm",
     "target_precipitation_hours",
 ]
+
+NUMPY_COMPAT_ALIASES = (
+    ("trapz", "trapezoid"),  # np.trapezoid since 2.0
+    ("in1d", "isin"),  # removed in 2.0
+    ("cumproduct", "cumprod"),  # removed in 2.0
+    ("product", "prod"),  # removed in 2.0
+    ("sometrue", "any"),  # removed in 2.0
+    ("alltrue", "all"),  # removed in 2.0
+    ("row_stack", "vstack"),  # removed in 2.0
+)
+
+
+def _patch_numpy_compat_aliases() -> None:
+    """Restore NumPy aliases still referenced by numba/aeon at runtime."""
+    for old_name, new_name in NUMPY_COMPAT_ALIASES:
+        if not hasattr(np, old_name):
+            setattr(np, old_name, getattr(np, new_name))  # type: ignore[attr-defined]
+
+
+try:
+    import mlflow.pyfunc as _mlflow_pyfunc
+
+    _MLFLOW_PYTHON_MODEL_BASE = _mlflow_pyfunc.PythonModel
+except Exception:  # pragma: no cover - handled when MLflow is actually used
+    _MLFLOW_PYTHON_MODEL_BASE = object
+
+
+class MunicipioDayPyfuncModel(_MLFLOW_PYTHON_MODEL_BASE):
+    """MLflow pyfunc wrapper for the Mini-ROCKET + per-municipio Ridge bundle."""
+
+    def load_context(self, context: Any) -> None:
+        self.rocket = joblib.load(context.artifacts["rocket"])
+        self.models = joblib.load(context.artifacts["models"])
+        registry_path = Path(context.artifacts["registry"])
+        self.registry = json.loads(registry_path.read_text(encoding="utf-8"))
+
+    def predict(
+        self,
+        context: Any,
+        model_input: pd.DataFrame,
+        params: dict[str, Any] | None = None,
+    ) -> pd.DataFrame:
+        _patch_numpy_compat_aliases()
+        frame = pd.DataFrame(model_input)
+        required = {"codigo_municipio", "sequence", "y_mean", "y_std"}
+        missing = required.difference(frame.columns)
+        if missing:
+            raise ValueError(f"Missing required prediction columns: {sorted(missing)}")
+
+        sequences = np.stack(
+            [
+                np.asarray(sequence, dtype=np.float32)
+                for sequence in frame["sequence"].tolist()
+            ],
+            axis=0,
+        )
+        X_rocket = self.rocket.transform(sequences).astype(np.float32)
+
+        rows: list[dict[str, Any]] = []
+        for i, input_row in frame.reset_index(drop=True).iterrows():
+            mun_id = str(input_row["codigo_municipio"])
+            model = self.models.get(mun_id)
+            if model is None:
+                raise ValueError(f"No model available for codigo_municipio={mun_id}")
+            pred_scaled = float(model.predict(X_rocket[i : i + 1])[0])
+            y_mean = float(input_row["y_mean"])
+            y_std = float(input_row["y_std"])
+            prediction_raw = pred_scaled * y_std + y_mean
+            rows.append(
+                {
+                    "codigo_municipio": mun_id,
+                    "prediction_raw": prediction_raw,
+                    "predicted_accident_count": max(0.0, prediction_raw),
+                    "prediction_scaled": pred_scaled,
+                }
+            )
+        return pd.DataFrame(rows)
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +381,9 @@ class MunicipioDayExperimentConfig:
     run_name: str | None = None
     output_subpath: str = DEFAULT_EXPERIMENT_OUTPUT_SUBPATH
     feature_input_subpath: str = DEFAULT_FEATURE_INPUT_SUBPATH
+    registered_model_name: str = DEFAULT_REGISTERED_MODEL_NAME
+    champion_alias: str = DEFAULT_CHAMPION_ALIAS
+    register_model: bool = True
     n_kernels: int = DEFAULT_N_KERNELS
     random_seed: int = DEFAULT_RANDOM_SEED
     ridge_alphas: list[float] = field(
@@ -332,6 +417,18 @@ class MunicipioDayExperimentConfig:
             "ML_MUNICIPIO_DAY_FEATURE_INPUT_SUBPATH",
             raw.get("feature_input_subpath", DEFAULT_FEATURE_INPUT_SUBPATH),
         )
+        raw["registered_model_name"] = os.environ.get(
+            "ML_MUNICIPIO_DAY_REGISTERED_MODEL_NAME",
+            raw.get("registered_model_name", DEFAULT_REGISTERED_MODEL_NAME),
+        )
+        raw["champion_alias"] = os.environ.get(
+            "ML_MUNICIPIO_DAY_CHAMPION_ALIAS",
+            raw.get("champion_alias", DEFAULT_CHAMPION_ALIAS),
+        )
+        raw["register_model"] = _env_bool(
+            "ML_MUNICIPIO_DAY_REGISTER_MODEL",
+            bool(raw.get("register_model", True)),
+        )
         raw["alpha_selection_split"] = os.environ.get(
             "ML_MUNICIPIO_DAY_ALPHA_SELECTION_SPLIT",
             raw.get("alpha_selection_split", "validation"),
@@ -351,6 +448,60 @@ def _default_experiment_run_name(cfg: MunicipioDayExperimentConfig) -> str:
         f"__kernels={cfg.n_kernels}"
         f"__seed={cfg.random_seed}"
     )
+
+
+@dataclass
+class MunicipioDayForecastConfig:
+    tracking_uri: str = "http://mlflow:5000"
+    model_uri: str = f"models:/{DEFAULT_REGISTERED_MODEL_NAME}@{DEFAULT_CHAMPION_ALIAS}"
+    feature_input_subpath: str = DEFAULT_FEATURE_INPUT_SUBPATH
+    output_subpath: str = DEFAULT_FORECAST_OUTPUT_SUBPATH
+    horizon_days: int = 30
+    project_root: Path = field(default_factory=lambda: PROJECT_ROOT)
+
+    @classmethod
+    def from_yaml(
+        cls, path: Path, project_root: Path = PROJECT_ROOT
+    ) -> MunicipioDayForecastConfig:
+        raw: dict[str, Any] = {}
+        if path.exists():
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                raw = loaded
+        raw["tracking_uri"] = os.environ.get(
+            "MLFLOW_TRACKING_URI", raw.get("tracking_uri", "http://mlflow:5000")
+        )
+        registered_model_name = os.environ.get(
+            "ML_MUNICIPIO_DAY_REGISTERED_MODEL_NAME",
+            raw.get("registered_model_name", DEFAULT_REGISTERED_MODEL_NAME),
+        )
+        champion_alias = os.environ.get(
+            "ML_MUNICIPIO_DAY_CHAMPION_ALIAS",
+            raw.get("champion_alias", DEFAULT_CHAMPION_ALIAS),
+        )
+        raw["model_uri"] = os.environ.get(
+            "ML_MUNICIPIO_DAY_MODEL_URI",
+            raw.get("model_uri", f"models:/{registered_model_name}@{champion_alias}"),
+        )
+        raw["feature_input_subpath"] = os.environ.get(
+            "ML_MUNICIPIO_DAY_FEATURE_INPUT_SUBPATH",
+            raw.get("feature_input_subpath", DEFAULT_FEATURE_INPUT_SUBPATH),
+        )
+        raw["output_subpath"] = os.environ.get(
+            "ML_MUNICIPIO_DAY_FORECAST_OUTPUT_SUBPATH",
+            raw.get("output_subpath", DEFAULT_FORECAST_OUTPUT_SUBPATH),
+        )
+        raw["horizon_days"] = int(
+            os.environ.get(
+                "ML_MUNICIPIO_DAY_FORECAST_HORIZON_DAYS",
+                raw.get("horizon_days", 30),
+            )
+        )
+        raw.pop("project_root", None)
+        return cls(
+            **{k: v for k, v in raw.items() if k in cls.__dataclass_fields__},
+            project_root=project_root,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1030,20 +1181,7 @@ class MunicipioDayRegressionExperiment(BaseMLflowRegressionExperiment):
 
     def featurize(self, data: dict[str, Any]) -> dict[str, Any]:
         """Build per-municipio sequences and fit the shared MiniRocket."""
-        # numba 0.63.0b1 references several numpy functions removed in NumPy 2.0
-        # at module-load time (arraymath.py).  Restore them as aliases before
-        # numba is imported transitively through aeon.
-        for _old, _new in [
-            ("trapz", "trapezoid"),  # np.trapezoid since 2.0
-            ("in1d", "isin"),  # removed in 2.0
-            ("cumproduct", "cumprod"),  # removed in 2.0
-            ("product", "prod"),  # removed in 2.0
-            ("sometrue", "any"),  # removed in 2.0
-            ("alltrue", "all"),  # removed in 2.0
-            ("row_stack", "vstack"),  # removed in 2.0
-        ]:
-            if not hasattr(np, _old):
-                setattr(np, _old, getattr(np, _new))  # type: ignore[attr-defined]
+        _patch_numpy_compat_aliases()
         try:
             from aeon.transformations.collection.convolution_based import (
                 MiniRocket,
@@ -1325,6 +1463,55 @@ class MunicipioDayRegressionExperiment(BaseMLflowRegressionExperiment):
 
         mlflow = _import_mlflow()
         mlflow.log_artifacts(str(artifact_staging))
+        registered_version: str | None = None
+        if cfg.register_model:
+            model_info = mlflow.pyfunc.log_model(
+                artifact_path="model",
+                python_model=MunicipioDayPyfuncModel(),
+                artifacts={
+                    "rocket": str(rocket_local),
+                    "models": str(ridge_local),
+                    "registry": str(registry_local),
+                },
+                registered_model_name=cfg.registered_model_name,
+                metadata={
+                    "model_variant": str(feature_data["registry"].get("model_variant")),
+                    "feature_input_subpath": cfg.feature_input_subpath,
+                    "run_id": run_id,
+                },
+            )
+            client = mlflow.tracking.MlflowClient()
+            versions = [
+                version
+                for version in client.search_model_versions(
+                    f"name = '{cfg.registered_model_name}'"
+                )
+                if getattr(version, "run_id", None) == run_id
+            ]
+            if versions:
+                latest = max(versions, key=lambda version: int(version.version))
+                registered_version = str(latest.version)
+            else:
+                registered_version = str(
+                    getattr(model_info, "registered_model_version", "") or ""
+                )
+            if registered_version:
+                client.set_registered_model_alias(
+                    cfg.registered_model_name,
+                    cfg.champion_alias,
+                    registered_version,
+                )
+                self.logger.info(
+                    "Registered MLflow model %s version %s as alias %s",
+                    cfg.registered_model_name,
+                    registered_version,
+                    cfg.champion_alias,
+                )
+            else:
+                self.logger.warning(
+                    "Model registration finished but no version was resolved for %s",
+                    cfg.registered_model_name,
+                )
 
         subpath = cfg.output_subpath
         for local_file in artifact_staging.iterdir():
@@ -1396,6 +1583,270 @@ class MunicipioDayRegressionExperiment(BaseMLflowRegressionExperiment):
 
 
 # ---------------------------------------------------------------------------
+# Forecast phase
+# ---------------------------------------------------------------------------
+
+
+def _coerce_accident_dates(panel: pd.DataFrame) -> pd.DataFrame:
+    coerced = panel.copy()
+    if pd.api.types.is_datetime64_any_dtype(coerced["accident_date"]):
+        coerced["accident_date"] = coerced["accident_date"].dt.date
+    elif len(coerced) and not isinstance(coerced["accident_date"].iloc[0], date):
+        coerced["accident_date"] = pd.to_datetime(coerced["accident_date"]).dt.date
+    coerced["codigo_municipio"] = coerced["codigo_municipio"].astype(str)
+    return coerced
+
+
+def _build_future_feature_panel(
+    panel: pd.DataFrame,
+    registry: dict[str, Any],
+    horizon_days: int,
+) -> tuple[pd.DataFrame, list[date], date]:
+    if horizon_days < 1:
+        raise ValueError("horizon_days must be >= 1")
+
+    observed = _coerce_accident_dates(panel)
+    source_cutoff = max(observed["accident_date"])
+    future_dates = [
+        source_cutoff + timedelta(days=offset) for offset in range(1, horizon_days + 1)
+    ]
+
+    static_columns = [
+        "codigo_municipio",
+        "nome_municipio",
+        "sg_uf",
+        "cd_rgint",
+        "nm_rgint",
+    ]
+    static = (
+        observed[[c for c in static_columns if c in observed.columns]]
+        .drop_duplicates("codigo_municipio", keep="last")
+        .set_index("codigo_municipio")
+    )
+    municipio_codes: list[str] = registry["municipio_codes"]
+    max_look = int(registry.get("holiday_max_lookahead", DEFAULT_HOLIDAY_MAX_LOOKAHEAD))
+    years = sorted(
+        {
+            *(d.year for d in observed["accident_date"].unique().tolist()),
+            *(d.year for d in future_dates),
+        }
+    )
+    cal = _build_sc_calendar(list(range(min(years) - 1, max(years) + 2)))
+
+    rows: list[dict[str, Any]] = []
+    include_weather = bool(registry.get("include_weather_features", False))
+    for mun_id in municipio_codes:
+        base = static.loc[mun_id].to_dict() if mun_id in static.index else {}
+        for d in future_dates:
+            row: dict[str, Any] = {
+                "codigo_municipio": mun_id,
+                **base,
+                "accident_date": d,
+                "year": d.year,
+                "month": d.month,
+                "day": d.day,
+                "accident_count": 0.0,
+                "split": "forecast",
+                "non_working_day_weight": _day_weight(d, cal),
+                "days_off_ahead": _days_off_forward(d, cal, max_look),
+                "days_off_before": _days_off_backward(d, cal, max_look),
+            }
+            if include_weather:
+                for column in WEATHER_FEATURE_COLUMNS:
+                    row[column] = np.nan
+            rows.append(row)
+
+    future = pd.DataFrame(rows)
+    combined = pd.concat([observed, future], ignore_index=True, sort=False)
+    combined = combined.sort_values(["codigo_municipio", "accident_date"]).reset_index(
+        drop=True
+    )
+    return combined, future_dates, source_cutoff
+
+
+def _build_prediction_rows_for_date(
+    panel: pd.DataFrame,
+    registry: dict[str, Any],
+    target_date: date,
+) -> list[dict[str, Any]]:
+    lookback_days = int(registry["lookback_days"])
+    municipio_codes: list[str] = registry["municipio_codes"]
+    include_weather = bool(registry.get("include_weather_features", False))
+
+    all_dates: list[date] = sorted(panel["accident_date"].unique().tolist())
+    target_pos = all_dates.index(target_date)
+    if target_pos < lookback_days:
+        raise ValueError(
+            f"Not enough history to forecast {target_date}: "
+            f"need {lookback_days} days, found {target_pos}"
+        )
+    sequence_index = target_pos - lookback_days
+    train_years: set[int] = set(
+        panel.loc[panel["split"] == "train", "year"].unique().astype(int).tolist()
+    )
+    cal_channels = _precompute_calendar_channel_arrays(all_dates)
+    exo_channels = _precompute_exo_channel_arrays(all_dates, panel)
+
+    rows: list[dict[str, Any]] = []
+    for mun_id in municipio_codes:
+        mun_panel = panel[panel["codigo_municipio"] == mun_id].set_index(
+            "accident_date"
+        )
+        ac_series = mun_panel["accident_count"].astype(float)
+        weather_channels = (
+            _precompute_weather_channel_arrays(
+                all_dates,
+                mun_panel.reset_index(),
+                train_years,
+            )
+            if include_weather
+            else None
+        )
+        X_seq, _, target_idx, ac_mean, ac_std = _build_municipio_sequences(
+            ac_series,
+            all_dates,
+            cal_channels,
+            exo_channels,
+            weather_channels,
+            lookback_days,
+            train_years,
+        )
+        if int(target_idx[sequence_index]) != target_pos:
+            raise RuntimeError("Forecast sequence index alignment failed")
+        rows.append(
+            {
+                "codigo_municipio": mun_id,
+                "sequence": X_seq[sequence_index],
+                "y_mean": ac_mean,
+                "y_std": ac_std,
+            }
+        )
+    return rows
+
+
+class MunicipioDayForecaster:
+    def __init__(self, config: MunicipioDayForecastConfig | None = None) -> None:
+        _configure_logging()
+        self.forecast_config = config or MunicipioDayForecastConfig()
+        self.logger = logging.getLogger("municipio_day_forecaster")
+        self.datalake = DatalakeAdapter.from_env(
+            project_root=self.forecast_config.project_root
+        )
+        self._tmp = tempfile.TemporaryDirectory(dir="/tmp")
+        self._staging = Path(self._tmp.name)
+
+    def run(self) -> str:
+        cfg = self.forecast_config
+        panel, registry = _load_feature_data(
+            self.datalake,
+            cfg.feature_input_subpath,
+            self._staging,
+        )
+        forecast_panel, future_dates, source_cutoff = _build_future_feature_panel(
+            panel,
+            registry,
+            cfg.horizon_days,
+        )
+
+        mlflow = _import_mlflow()
+        mlflow.set_tracking_uri(cfg.tracking_uri)
+        model = mlflow.pyfunc.load_model(cfg.model_uri)
+        _patch_numpy_compat_aliases()
+        generated_at = datetime.now(UTC).isoformat()
+
+        predictions: list[pd.DataFrame] = []
+        for horizon_day, target_date in enumerate(future_dates, start=1):
+            payload = pd.DataFrame(
+                _build_prediction_rows_for_date(forecast_panel, registry, target_date)
+            )
+            predicted = model.predict(payload)
+            predicted = pd.DataFrame(predicted)
+            predicted["accident_date"] = target_date
+            predicted["forecast_horizon_day"] = horizon_day
+            predictions.append(predicted)
+
+            value_by_mun = predicted.set_index("codigo_municipio")[
+                "predicted_accident_count"
+            ].to_dict()
+            date_mask = forecast_panel["accident_date"] == target_date
+            forecast_panel.loc[date_mask, "accident_count"] = forecast_panel.loc[
+                date_mask, "codigo_municipio"
+            ].map(value_by_mun)
+            self.logger.info(
+                "Forecasted %s (%d/%d)",
+                target_date,
+                horizon_day,
+                len(future_dates),
+            )
+
+        forecast = pd.concat(predictions, ignore_index=True)
+        static = forecast_panel[
+            [
+                c
+                for c in [
+                    "codigo_municipio",
+                    "nome_municipio",
+                    "sg_uf",
+                    "cd_rgint",
+                    "nm_rgint",
+                ]
+                if c in forecast_panel.columns
+            ]
+        ].drop_duplicates("codigo_municipio", keep="last")
+        forecast = forecast.merge(static, on="codigo_municipio", how="left")
+        forecast["model_variant"] = registry.get("model_variant")
+        forecast["model_uri"] = cfg.model_uri
+        forecast["source_panel_max_date"] = source_cutoff
+        forecast["generated_at"] = generated_at
+        forecast["fonte"] = "previsão"
+        forecast = forecast[
+            [
+                "codigo_municipio",
+                "nome_municipio",
+                "sg_uf",
+                "cd_rgint",
+                "nm_rgint",
+                "accident_date",
+                "predicted_accident_count",
+                "prediction_raw",
+                "prediction_scaled",
+                "forecast_horizon_day",
+                "model_variant",
+                "model_uri",
+                "source_panel_max_date",
+                "generated_at",
+                "fonte",
+            ]
+        ].sort_values(["accident_date", "codigo_municipio"])
+
+        output_dir = self._staging / "forecast_output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        forecast.to_parquet(output_dir / "forecast.parquet", index=False)
+        manifest = {
+            "generated_at": generated_at,
+            "model_uri": cfg.model_uri,
+            "model_variant": registry.get("model_variant"),
+            "source_panel_max_date": str(source_cutoff),
+            "horizon_days": cfg.horizon_days,
+            "forecast_min_date": str(min(future_dates)),
+            "forecast_max_date": str(max(future_dates)),
+            "feature_input_subpath": cfg.feature_input_subpath,
+            "output_subpath": cfg.output_subpath,
+            "n_rows": int(len(forecast)),
+        }
+        (output_dir / "forecast_manifest.json").write_text(
+            json.dumps(manifest, indent=2, default=str),
+            encoding="utf-8",
+        )
+        dest = self.datalake.persist_directory(output_dir, cfg.output_subpath)
+        self.logger.info("Forecast persisted under %s", dest)
+        return dest
+
+    def cleanup(self) -> None:
+        self._tmp.cleanup()
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -1413,7 +1864,7 @@ def main() -> None:
     )
     parser.add_argument(
         "phase",
-        choices=["featurize", "train"],
+        choices=["featurize", "train", "predict"],
         help="Pipeline phase to execute",
     )
     parser.add_argument(
@@ -1439,6 +1890,17 @@ def main() -> None:
             project_root=project_root,
         )
         MunicipioDayRegressionExperiment(config=exp_config).run()
+
+    elif args.phase == "predict":
+        forecast_config = MunicipioDayForecastConfig.from_yaml(
+            project_root / DEFAULT_EXPERIMENT_CONFIG_PATH,
+            project_root=project_root,
+        )
+        forecaster = MunicipioDayForecaster(config=forecast_config)
+        try:
+            forecaster.run()
+        finally:
+            forecaster.cleanup()
 
 
 if __name__ == "__main__":
