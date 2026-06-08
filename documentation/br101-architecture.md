@@ -2,173 +2,340 @@
 
 ## Objetivo
 
-Este documento descreve a arquitetura atualmente implementada no repositório para ingestão e preparação dos dados para apresentação histórica e previsão de acidentes ao longo da BR-101, além das possíveis extensões (tecnologias/recursos pagos) mais coerentes para a próxima fase.
+Este documento descreve a arquitetura implementada no repositorio para transformar dados abertos da BR-101 em painel analitico, modelo preditivo, API para servir o modelo e dashboard Streamlit.
 
-## Diagrama do pipeline de dados atual
+O desenho atual mantem a base BR-101 geral nas camadas bronze e silver, mas o fluxo downstream usado pela aplicacao e pelo modelo e um fork mais focado: BR-101 em Santa Catarina, com granularidade de municipio x dia e municipio x semana.
+
+## Visao geral
 
 ```mermaid
 flowchart LR
-    subgraph Sources[Fontes externas]
-        PRF[PRF acidentes]
-        DNIT[DNIT SNV]
-        IBGEM[IBGE municípios]
-        IBGER[IBGE RGI]
-    end
-
-    subgraph Runtime[Runtime]
+    subgraph Runtime[Runtime local]
         MAKE[Makefile]
-        DOCKER[Docker Compose]
+        COMPOSE[Docker Compose]
         SPARK[PySpark + Sedona]
         DVC[DVC]
-        DL[DatalakeAdapter]
     end
 
-    subgraph Bronze[Camada Bronze]
-        PRFB[(bronze/prf_accidents)]
-        DNITB[(bronze/dnit_road_network)]
-        MUNB[(bronze/ibge/municipios)]
-        RGIB[(bronze/ibge/rgi)]
+    subgraph Sources[Fontes]
+        PRF[PRF acidentes]
+        DNIT[DNIT SNV]
+        IBGE[IBGE municipios/RGI]
+        OM[Open-Meteo]
     end
 
-    subgraph Silver[Camada Silver]
-        PRFS[(silver/prf_accidents_standardized)]
-        DNITS[(silver/dnit_br101_corridor)]
-        IBGEMS[(silver/ibge_territorial_preprocessed/municipalities_preprocessed)]
-        IBGERS[(silver/ibge_territorial_preprocessed/rgis_preprocessed)]
+    subgraph Bronze[Bronze]
+        PRFB[(prf_accidents)]
+        DNITB[(dnit_road_network)]
+        IBGEB[(ibge)]
     end
 
-    PRF --> MAKE
-    DNIT --> MAKE
-    IBGEM --> MAKE
-    IBGER --> MAKE
+    subgraph Silver[Silver]
+        PRFS[(prf_accidents_standardized)]
+        DNITS[(dnit_br101_corridor)]
+        IBGES[(ibge_territorial_preprocessed)]
+    end
 
-    MAKE --> DOCKER --> SPARK
-    SPARK --> DL
+    subgraph Gold[Gold]
+        SC[(br101_sc_municipio_panel)]
+        WEATHER[(daily_weather)]
+        RGI[(br101_rgi_weekly_panel legado)]
+    end
+
+    subgraph ML[Modelagem]
+        FEAT[(municipio_day_features)]
+        TRAIN[MiniRocket + Ridge]
+        REG[MLflow Model Registry]
+        FORECAST[(municipio_day_forecast)]
+    end
+
+    subgraph Serving[Serving e consumo]
+        API[FastAPI]
+        VIZ[Streamlit]
+    end
+
+    MAKE --> COMPOSE
+    COMPOSE --> SPARK
     DVC --- Bronze
     DVC --- Silver
+    DVC --- SC
 
-    PRF --> PRFB --> PRFS
-    DNIT --> DNITB --> DNITS
-    IBGEM --> MUNB --> IBGEMS
-    IBGER --> RGIB --> IBGERS
+    PRF --> PRFB --> PRFS --> SC
+    DNIT --> DNITB --> DNITS --> SC
+    IBGE --> IBGEB --> IBGES --> SC
+    PRFS --> RGI
+    DNITS --> RGI
+    IBGES --> RGI
+    OM --> WEATHER
+
+    SC --> FEAT --> TRAIN --> REG
+    REG --> API
+    API --> FORECAST
+    FORECAST --> VIZ
+    SC --> VIZ
 ```
 
-## Arquitetura parcial implementada
+## Camadas de dados
 
-### Contratos já implementados
+### Bronze
 
-- `BaseETLJob` padroniza o ciclo `extract -> transform -> load -> cleanup`.
-- `DatalakeAdapter` permite persistir localmente em `data/` e já suporta backend `s3`.
-- O `Makefile` expõe a execução local via Docker e a reprodução via DVC.
-- `dvc.yaml` já define as etapas bronze e silver atualmente implementadas.
+A bronze guarda snapshots pouco transformados das fontes externas:
 
-### Camada bronze
+- `data/bronze/prf_accidents`
+- `data/bronze/dnit_road_network`
+- `data/bronze/ibge/municipios`
+- `data/bronze/ibge/rgi`
 
-- `prf_source2bronze` gera `data/bronze/prf_accidents`.
-- `dnit_source2bronze` gera `data/bronze/dnit_road_network`.
-- `ibge_municipios_src2bronze` gera `data/bronze/ibge/municipios`.
-- `ibge_rgi_src2bronze` gera `data/bronze/ibge/rgi`.
+Targets:
 
-### Camada silver
+```bash
+make prf-source2bronze
+make dnit-source2bronze
+make ibge-municipios-source2bronze
+make ibge-rgi-source2bronze
+```
 
-- `prf_bronze2silver` padroniza tipos, datas, coordenadas e indicadores da PRF.
-- `dnit_bronze2silver` gera os artefatos espaciais da BR-101 a partir do DNIT:
-  - centerlines por snapshot
-  - corredores por snapshot
-  - união das centerlines
-  - união dos corredores
-- `ibge_bronze2silver` gera os artefatos territoriais pré-processados do IBGE:
-  - `municipalities_preprocessed`
-  - `rgis_preprocessed`
+### Silver
 
-### O que ainda não está implementado
+A silver padroniza cada fonte ainda de forma isolada:
 
-- Nenhum job `silver2gold`.
-- Nenhum cruzamento PRF x DNIT x IBGE persistido como dataset gold.
-- Nenhuma camada de features para modelagem.
-- Nenhum job de inferência ou publicação de previsões.
+- `prf_accidents_standardized`: datas, coordenadas, tipos e filtros da PRF.
+- `dnit_br101_corridor`: eixo e corredor BR-101 derivados do SNV.
+- `ibge_territorial_preprocessed`: geometrias e atributos territoriais do IBGE.
 
-## Fronteira correta da silver atual
+Targets:
 
-A silver do projeto para no ponto em que cada fonte ainda pode ser tratada isoladamente:
+```bash
+make prf-bronze2silver
+make dnit-bronze2silver
+make ibge-bronze2silver
+```
 
-- PRF: padronização tabular e filtros da própria fonte.
-- DNIT: construção do corredor BR-101 a partir das geometrias do próprio DNIT.
-- IBGE: normalização dos polígonos e atributos territoriais do próprio IBGE.
+### Gold principal: Santa Catarina por municipio
 
-O que fica explicitamente fora da silver:
+O gold usado downstream e `data/gold/br101_sc_municipio_panel`.
 
-- interseção DNIT x IBGE para recortar municípios ou RGIs cruzados pela rodovia
-- interseção PRF x DNIT para classificar acidente dentro/fora do corredor
-- atribuição PRF x IBGE para município e RGI
+Ele cruza as fontes silver para:
 
-Essas transformações já dependem de mais de uma fonte e devem entrar em jobs posteriores.
+- restringir o escopo aos municipios catarinenses atravessados ou cobertos pelo corredor BR-101;
+- atribuir trechos da rodovia a municipios;
+- construir acidentes canonicos por municipio;
+- materializar paineis diarios e semanais completos.
 
-## Tecnologias já utilizadas
+Artefatos principais:
 
-| Tecnologia | Papel atual |
+- `canonical_accidents_by_municipio`
+- `canonical_accidents_by_municipio_day`
+- `canonical_accidents_by_municipio_week`
+- `municipios_in_scope`
+- `road_sections_by_municipio`
+
+Target:
+
+```bash
+make br101-sc-municipio-silver2gold
+```
+
+Esse é o fork mais delimitado do processamento BR-101: em vez de operar no nivel RGI/semana para toda a extensao original, ele reduz o escopo territorial para Santa Catarina e aumenta a granularidade para municipio/dia.
+
+### Gold legado/alternativo
+
+`data/gold/br101_rgi_weekly_panel` continua implementado e ainda alimenta o pipeline `activity_group_*`. Ele e util para analises agregadas por RGI e semana, mas nao e o caminho principal da aplicacao Streamlit nem do champion model atual.
+
+## Weather incremental
+
+O job de clima fica em `src/etl/gold/openmeteo_src2gold.py` e grava `data/gold/br101_sc_municipio_panel/daily_weather`.
+
+Ele suporta dois modos:
+
+```bash
+make openmeteo-json2gold
+make openmeteo-api2gold
+```
+
+O modo API usa a maior data existente como ponto de partida e busca ate a data corrente. Por isso, a carga funciona como uma atualizacao incremental, "streaming-like" em conceito, embora ainda rode como batch sob demanda.
+
+Hoje esses dados estao materializados e existe variante de featurizacao/treino com dados climátios. O champion model atual, porém, foi selecionado no caminho sem esses dados.
+
+## Featurizacao e treino
+
+O pipeline principal de ML esta em `src/ml/municipio_day_regression.py`.
+
+Fluxo:
+
+1. Lê `br101_sc_municipio_panel`.
+2. Constrói janelas de série temporal por municipio.
+3. Aplica featurização MiniRocket.
+4. Treina regressores Ridge.
+5. Registra metricas, parametros e modelo no MLflow.
+6. Publica o modelo registrado `radar-prf-101-municipio-day` com alias `champion`.
+
+Targets padrão:
+
+```bash
+make municipio-day-featurize
+make municipio-day-train
+```
+
+Targets com dados climáticos:
+
+```bash
+make municipio-day-featurize-weather
+make municipio-day-train-weather
+```
+
+O target make completo por padrão é o:
+
+```bash
+make municipio-day-full-forecast
+```
+
+## MLflow e champion model
+
+O MLflow roda em `http://localhost:5000` no servico Compose `mlflow`.
+
+O modelo servido e carregado pelo URI:
+
+```text
+models:/radar-prf-101-municipio-day@champion
+```
+
+Isso atende ao requisito de MLOps de acessar o modelo pelo MLflow, e nao por um caminho local de arquivos de modelo. A pasta local continua existindo para artefatos analiticos, manifests e previsoes persistidas, mas o contrato de serving do modelo usa o registry.
+
+## Predição e persistência
+
+A predição padrão cobre 30 dias após a última data histórica disponível no painel de acidentes.
+
+Target:
+
+```bash
+make municipio-day-predict
+```
+
+Saída:
+
+- `data/gold/ml/municipio_day_forecast/forecast.parquet`
+- `data/gold/ml/municipio_day_forecast/forecast_manifest.json`
+
+O arquivo de metadados manifest guarda a última data histórica usada para gerar o forecast, o horizonte e o intervalo previsto. A API e a visualização reutilizam essa previsão enquanto ela estiver atual. Quando uma atualização nos dados históricos avança a última data do painel, o forecast é considerado obsoleto e é disparado o retreinamento e nova previsão (período de 30 dias, novamente).
+
+## API FastAPI
+
+O servico `api` executa `src/api/app.py` e depende do MLflow para carregar o champion model.
+
+Endpoints:
+
+- `GET /health`
+- `POST /forecast/ensure`
+- `POST /predict`
+
+Comandos:
+
+```bash
+make mlflow-up
+make api-up
+make api-logs
+```
+
+`/forecast/ensure` evita recomputar previsões atuais. Se o forecast já existe e o manifest combina com o painel histórico vigente, a API apenas retorna o status. Se estiver ausente ou obsoleto, ela executa a pipeline necessária em background ou de forma bloqueante, conforme o payload.
+
+`/predict` retorna previsões a partir do forecast persistido e também pode acionar a geração quando necessário.
+
+## Streamlit
+
+O servico `viz` roda a aplicação Streamlit em `src/viz/app.py`.
+
+Comandos:
+
+```bash
+make viz-up
+make viz-logs
+```
+
+URL local:
+
+```text
+http://localhost:8501
+```
+
+Capacidades atuais:
+
+- granularidade diária e semanal;
+- seleção de tipo de periodo: todos, histórico, previsão e misto;
+- seleção de data/semana por componente de lista, substituindo o slider;
+- mapa por município;
+- gráficos temporais com previsão destacada;
+- abas de dados, comparações, evolução e mapa de calor;
+- tabelas e séries com campo `period_type` para separar histórico de previsão.
+
+A previsão e claramente delineada na UI: série tracejada, área visual de forecast e rótulos `Previsões` nas visões tabulares. Isso evita confundir acidentes observados com valores previstos.
+
+## Execucao ponta a ponta local
+
+```bash
+make docker-up
+make mlflow-up
+make bronze
+make silver
+make gold
+make municipio-day-full-forecast
+make api-up
+make viz-up
+```
+
+Para logs:
+
+```bash
+make api-logs
+make viz-logs
+docker compose logs -f mlflow
+```
+
+## DVC
+
+O grafo DVC cobre as etapas batch principais até o painel gold SC:
+
+- `prf_source2bronze`
+- `dnit_source2bronze`
+- `ibge_municipios_src2bronze`
+- `ibge_rgi_src2bronze`
+- `prf_bronze2silver`
+- `dnit_bronze2silver`
+- `ibge_bronze2silver`
+- `br101_sc_municipio_silver2gold`
+- `municipio_day_featurize`
+
+Comandos:
+
+```bash
+make dvc-status
+make dvc-checkout
+make dvc-repro
+make dvc-repro-gold
+```
+
+## Tecnologias
+
+| Tecnologia | Papel |
 | --- | --- |
-| Python | linguagem principal dos ETLs e utilitários |
-| PySpark | engine dos jobs batch |
-| Apache Sedona | funções geoespaciais no Spark |
-| Parquet | armazenamento analítico dos datasets |
-| DVC | versionamento de dados e reprodução do pipeline |
-| Docker Compose | ambiente local padronizado |
-| Make | interface operacional dos comandos |
-| `uv` | gerenciamento de dependências |
-| Pandas / GeoPandas / Shapely | EDA e especificação inicial via notebooks |
+| Python | jobs, ML, API e Streamlit |
+| PySpark | processamento batch |
+| Apache Sedona | geoprocessamento distribuido |
+| Parquet | armazenamento analitico |
+| DVC | reproducao/versionamento do pipeline batch |
+| Docker Compose | runtime local |
+| MLflow | tracking, registry e alias champion |
+| FastAPI | serving e orquestracao de forecast |
+| Streamlit | dashboard interativo |
+| MiniRocket | transformacao de series temporais |
+| Ridge | regressao final por municipio |
+| Open-Meteo | enriquecimento climatico diario |
 
-## Tecnologias pagas que poderiam ser usadas para refinamento
+## Fronteiras de responsabilidade
 
-| Tecnologia paga | Onde ajudaria | Justificativa |
-| --- | --- | --- |
-| Amazon S3 | datalake remoto | o projeto já possui `S3DatalakeAdapter`; é o upgrade mais natural para sair do disco local sem reescrever os jobs |
-| EMR Serverless | execução gerenciada de Spark | preserva PySpark/Sedona, elimina a necessidade de operar cluster fixo e escala melhor quando os cruzamentos gold entrarem |
-| AWS Glue Data Catalog | catálogo e descoberta das tabelas | passa a fazer sentido quando houver mais famílias de datasets e consultas compartilhadas |
-| Databricks | alternativa de plataforma Spark gerenciada | útil se o time priorizar governança, jobs, notebooks e observabilidade em uma mesma plataforma |
-| QuickSight ou Power BI | camada de consumo gerencial | só vale quando a branch gold para reporting estiver pronta e houver necessidade de publicação recorrente |
-
-### Escolha atual e justificativa
-
-A escolha mais defensável neste estágio continua sendo:
-
-1. Spark local em Docker para desenvolvimento.
-2. DVC para versionar saídas materializadas.
-3. Parquet em `data/` como datalake local.
-
-Justificativa:
-
-- a superfície implementada ainda está concentrada em bronze e silver
-- o custo operacional de subir infraestrutura paga agora é maior do que o benefício
-- o repositório já foi desenhado para evoluir para S3 sem quebrar o contrato dos jobs
-
-## Equipe responsável e divisão de tarefas
-
-### Responsável identificado no repositório
-
-- Autor configurado em [pyproject.toml](./pyproject.toml:8): Arthur Wolmer
-
-### Divisão de tarefas observável hoje
-
-Como o repositório expõe apenas um autor configurado, a divisão atual está centralizada:
-
-- engenharia de ingestão e transformação em `src/etl`
-- versionamento e reprodução do pipeline via `dvc.yaml` e `Makefile`
-- documentação técnica em `README.md` e `documentation/`
-- especificação inicial das regras de negócio nos notebooks `notebooks/eda-p1.ipynb` e `notebooks/eda-p2.ipynb`
-
-### Divisão recomendada quando o projeto crescer
-
-- Engenharia de dados: jobs bronze, silver, gold, qualidade e operação.
-- Engenharia de plataforma: runtime Docker, storage remoto, CI/CD e observabilidade.
-- Ciência de dados / análise: regras de integração, validação dos recortes, modelagem e consumo analítico.
-
-## Próximo passo arquitetural natural
-
-O próximo salto coerente é promover para gold os cruzamentos já definidos no notebook:
-
-1. classificar acidentes PRF contra o corredor canônico DNIT
-2. atribuir acidentes canônicos a município e RGI com as geometrias IBGE
-3. persistir datasets auditáveis de cobertura, exceções e atribuições
-
-Depois disso, o projeto passa a justificar melhor as extensões pagas de storage remoto e runtime gerenciado.
+- `src/etl`: ingestao, padronizacao e materializacao bronze/silver/gold.
+- `src/ml`: featurizacao, treino, avaliacao e predicao.
+- `src/api`: serving por MLflow e gerenciamento de forecast persistido.
+- `src/viz`: consumo analitico e visualizacao interativa.
+- `Makefile`: interface operacional.
+- `docker-compose.yml`: servicos locais para Spark, MLflow, API e Streamlit.
