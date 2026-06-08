@@ -20,6 +20,14 @@ from src.viz.formatting import (
     format_period_pt_br,
 )
 from src.viz.map import METRICS, add_choropleth, base_map
+from src.viz.plots import (
+    delta_bar,
+    highlighted_timeseries,
+    period_heatmap,
+    ranking_bar,
+    selected_vs_average,
+    share_area,
+)
 
 st.set_page_config(
     page_title="Radar PRF BR-101 SC",
@@ -51,6 +59,85 @@ def period_label(granularity: str, period, rows: pd.DataFrame) -> str:
     ):
         return format_period_pt_br(period, rows["week_end"].dropna().iloc[0])
     return format_date_pt_br(period)
+
+
+COMPARISON_LEVELS = {
+    "regiao": {
+        "label": "Região",
+        "column": "nm_rgint",
+        "option": "Regiões",
+    },
+    "municipio": {
+        "label": "Município",
+        "column": "nome_municipio",
+        "option": "Municípios",
+    },
+}
+
+WINDOW_OPTIONS = {
+    "Últimos 90 períodos": 90,
+    "Últimos 180 períodos": 180,
+    "Últimos 365 períodos": 365,
+    "Todo o período": None,
+}
+
+
+def period_window(
+    panel: pd.DataFrame,
+    date_column: str,
+    periods: list,
+    selected_period,
+    window_size: int | None,
+) -> pd.DataFrame:
+    if selected_period not in periods:
+        return panel.copy()
+
+    end_index = periods.index(selected_period)
+    if window_size is None:
+        selected_periods = periods[: end_index + 1]
+    else:
+        start_index = max(0, end_index - window_size + 1)
+        selected_periods = periods[start_index : end_index + 1]
+    return panel[panel[date_column].isin(selected_periods)].copy()
+
+
+def previous_period(periods: list, selected_period):
+    if selected_period not in periods:
+        return None
+    selected_index = periods.index(selected_period)
+    if selected_index == 0:
+        return None
+    return periods[selected_index - 1]
+
+
+def entity_options(panel: pd.DataFrame, entity_column: str) -> list[str]:
+    return sorted(panel[entity_column].fillna("Sem região").astype(str).unique())
+
+
+def default_entity(
+    period_rows: pd.DataFrame,
+    entity_column: str,
+    metric: str,
+    options: list[str],
+) -> str:
+    if not options:
+        return ""
+    ranked = (
+        period_rows.assign(
+            **{
+                entity_column: period_rows[entity_column]
+                .fillna("Sem região")
+                .astype(str),
+                metric: pd.to_numeric(period_rows[metric], errors="coerce").fillna(0),
+            }
+        )
+        .groupby(entity_column)[metric]
+        .sum()
+        .sort_values(ascending=False)
+    )
+    if ranked.empty:
+        return options[0]
+    return str(ranked.index[0])
 
 
 def main() -> None:
@@ -92,6 +179,35 @@ def main() -> None:
             format_func=lambda value: METRICS[value]["label"],
         )
 
+        sidebar_period_rows = rows_for_period(panel, granularity, selected_period)
+        comparison_level = st.radio(
+            "Comparar por",
+            options=list(COMPARISON_LEVELS.keys()),
+            horizontal=True,
+            format_func=lambda value: COMPARISON_LEVELS[value]["option"],
+        )
+        entity_column = COMPARISON_LEVELS[comparison_level]["column"]
+        entity_label = COMPARISON_LEVELS[comparison_level]["label"]
+        entities = entity_options(panel, entity_column)
+        selected_default = default_entity(
+            sidebar_period_rows,
+            entity_column,
+            metric,
+            entities,
+        )
+        selected_entity = st.selectbox(
+            f"Destaque em {entity_label.lower()}",
+            options=entities,
+            index=entities.index(selected_default)
+            if selected_default in entities
+            else 0,
+        )
+        window_label = st.selectbox(
+            "Janela dos gráficos",
+            options=list(WINDOW_OPTIONS.keys()),
+            index=1 if granularity == "dia" else 0,
+        )
+
         st.divider()
         st.caption(f"Fonte de dados: `{root}`")
 
@@ -99,6 +215,14 @@ def main() -> None:
     metric_label = METRICS[metric]["label"]
     date_column = PANEL_TABLES[granularity]["date_column"]
     period_text = period_label(granularity, selected_period, period_rows)
+    chart_panel = period_window(
+        panel,
+        date_column,
+        periods,
+        selected_period,
+        WINDOW_OPTIONS[window_label],
+    )
+    previous = previous_period(periods, selected_period)
     features = build_municipio_features(str(root))
     geojson = as_geojson(features, period_rows, metric)
     center, bounds = load_bounds(str(root))
@@ -121,8 +245,11 @@ def main() -> None:
     add_choropleth(m, geojson, metric=metric, metric_label=metric_label)
     st_folium(m, height=650, use_container_width=True, returned_objects=[])
 
-    lower_left, lower_right = st.columns([2, 1])
-    with lower_left:
+    dados, comparacoes, evolucao, calor = st.tabs(
+        ["Dados", "Comparações", "Evolução", "Mapa de calor"]
+    )
+
+    with dados:
         st.subheader("Municípios no período")
         table = period_rows[
             [
@@ -148,19 +275,95 @@ def main() -> None:
         )
         st.dataframe(table, use_container_width=True, hide_index=True)
 
-    with lower_right:
-        st.subheader("Série temporal")
-        series = (
-            panel.groupby(date_column, as_index=False)["accident_count"]
-            .sum()
-            .rename(columns={date_column: "Data", "accident_count": "Acidentes"})
-        )
-        st.line_chart(series, x="Data", y="Acidentes", height=300)
         st.caption(
             "Quando previsões forem materializadas, o app anexa períodos futuros "
             "via `VIZ_FORECAST_PATH` ou pelos caminhos gold padrão."
         )
         st.caption(f"Fonte no período selecionado: {source_label or '-'}")
+
+    with comparacoes:
+        left, right = st.columns(2)
+        with left:
+            st.plotly_chart(
+                ranking_bar(
+                    period_rows,
+                    entity_column=entity_column,
+                    entity_label=entity_label,
+                    metric=metric,
+                    metric_label=metric_label,
+                    selected_entity=selected_entity,
+                ),
+                use_container_width=True,
+            )
+        with right:
+            st.plotly_chart(
+                delta_bar(
+                    panel,
+                    date_column=date_column,
+                    current_period=selected_period,
+                    previous_period=previous,
+                    entity_column=entity_column,
+                    entity_label=entity_label,
+                    metric=metric,
+                    metric_label=metric_label,
+                    selected_entity=selected_entity,
+                ),
+                use_container_width=True,
+            )
+
+    with evolucao:
+        st.plotly_chart(
+            highlighted_timeseries(
+                chart_panel,
+                date_column=date_column,
+                entity_column=entity_column,
+                entity_label=entity_label,
+                metric=metric,
+                metric_label=metric_label,
+                selected_entity=selected_entity,
+            ),
+            use_container_width=True,
+        )
+        left, right = st.columns(2)
+        with left:
+            st.plotly_chart(
+                selected_vs_average(
+                    chart_panel,
+                    date_column=date_column,
+                    entity_column=entity_column,
+                    entity_label=entity_label,
+                    metric=metric,
+                    metric_label=metric_label,
+                    selected_entity=selected_entity,
+                ),
+                use_container_width=True,
+            )
+        with right:
+            st.plotly_chart(
+                share_area(
+                    chart_panel,
+                    date_column=date_column,
+                    entity_column=entity_column,
+                    entity_label=entity_label,
+                    metric=metric,
+                    metric_label=metric_label,
+                    selected_entity=selected_entity,
+                ),
+                use_container_width=True,
+            )
+
+    with calor:
+        st.plotly_chart(
+            period_heatmap(
+                chart_panel,
+                date_column=date_column,
+                entity_column=entity_column,
+                entity_label=entity_label,
+                metric=metric,
+                metric_label=metric_label,
+            ),
+            use_container_width=True,
+        )
 
 
 if __name__ == "__main__":
