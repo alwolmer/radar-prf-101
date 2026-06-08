@@ -48,7 +48,36 @@ services:
       - .:/app
     environment:
       VIZ_PANEL_PATH: /app/data/gold/br101_sc_municipio_panel
+      VIZ_FORECAST_PATH: /app/data/gold/ml/municipio_day_forecast
+      VIZ_API_URL: http://api:8000
     working_dir: /app
+    depends_on:
+      - api
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/etl/Dockerfile
+    image: alwolmer/radar-prf-101-api:latest
+    container_name: radar_prf_101_api
+    command: ["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - uv-cache:/tmp/uv-cache
+      - mlflow-data:/mlflow
+    environment:
+      DATALAKE_BACKEND: local
+      DATALAKE_LOCAL_ROOT: /app/data
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_EXPERIMENT_NAME: radar-prf-101-municipio-day-ridge
+      ML_MUNICIPIO_DAY_MODEL_URI: models:/radar-prf-101-municipio-day@champion
+      ML_MUNICIPIO_DAY_FORECAST_OUTPUT_SUBPATH: gold/ml/municipio_day_forecast
+      ML_MUNICIPIO_DAY_FORECAST_HORIZON_DAYS: 30
+    working_dir: /app
+    depends_on:
+      - mlflow
 
 volumes:
   uv-cache:

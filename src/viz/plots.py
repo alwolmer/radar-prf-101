@@ -212,36 +212,61 @@ def highlighted_timeseries(
     metric_label: str,
     selected_entity: str,
 ) -> go.Figure:
-    grouped = aggregate_by_period(
-        panel,
-        date_column=date_column,
-        entity_column=entity_column,
-        metric=metric,
+    columns = [date_column, entity_column, metric]
+    if "fonte" in panel.columns:
+        columns.append("fonte")
+    frame = panel[columns].copy()
+    frame[entity_column] = frame[entity_column].fillna("Sem região").astype(str)
+    frame[metric] = pd.to_numeric(frame[metric], errors="coerce").fillna(0.0)
+    if "fonte" not in frame.columns:
+        frame["fonte"] = "histórico"
+    grouped = (
+        frame.groupby([date_column, entity_column, "fonte"], as_index=False)[metric]
+        .sum()
+        .sort_values([date_column, entity_column, "fonte"])
     )
     if grouped.empty:
         return _empty_figure("Nenhuma série disponível.")
 
     fig = go.Figure()
-    for entity, entity_rows in grouped.groupby(entity_column):
+    for (entity, source), entity_rows in grouped.groupby([entity_column, "fonte"]):
         is_selected = entity == selected_entity
+        is_forecast = source == "previsão"
         fig.add_trace(
             go.Scatter(
                 x=entity_rows[date_column],
                 y=entity_rows[metric],
                 mode="lines",
-                name=str(entity) if is_selected else "Demais",
+                name=(
+                    f"{entity} ({source})"
+                    if is_selected and is_forecast
+                    else (str(entity) if is_selected else "Demais")
+                ),
                 line={
                     "color": HIGHLIGHT_COLOR if is_selected else MUTED_COLOR,
                     "width": 3.2 if is_selected else 1,
+                    "dash": "dash" if is_forecast else "solid",
                 },
                 opacity=1.0 if is_selected else 0.35,
                 hovertemplate=(
                     f"{entity_label}: {entity}<br>"
                     "Período: %{x}<br>"
+                    f"Fonte: {source}<br>"
                     f"{metric_label}: %{{y:.2f}}<extra></extra>"
                 ),
                 showlegend=is_selected,
             )
+        )
+
+    forecast_dates = grouped.loc[grouped["fonte"] == "previsão", date_column]
+    if not forecast_dates.empty:
+        fig.add_vrect(
+            x0=min(forecast_dates),
+            x1=max(forecast_dates),
+            fillcolor="#fff7ed",
+            opacity=0.35,
+            layer="below",
+            line_width=0,
         )
 
     fig.update_layout(
